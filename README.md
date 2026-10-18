@@ -200,17 +200,50 @@ ChatGPT Custom Connector ──HTTPS──> nano_relay.php (InfinityFree / cPane
 
 3. **Connect ChatGPT / Claude as Custom MCP Connector**:
    * In ChatGPT → **Settings → Connectors → Create custom connector** (or Claude MCP connector):
-   * Endpoint URL: `https://your-server.com/nano_relay.php?op=mcp&s=YOUR_CLIENT_SECRET`
+   * Endpoint URL: `https://your-server.com/nano_relay.php?op=mcp&s=YOUR_SESSION_KEY`
 
 ---
 
-#### The Universal SYSTEM Prompt for Agentic Chat Platforms
-For platforms supporting Custom Instructions, System Prompts, or direct tool/fetch calling (ChatGPT, Kimi, Claude, GLM, Qwen, DeepSeek), copy and paste this system prompt at the top or bottom of your prompt:
+### Multi-Session Isolation & Dynamic Sessions
 
-```markdown
+Need to work across multiple projects or terminals concurrently? `nano-airbridge` features **zero-collision session isolation**:
+
+```bash
+# Terminal 1: Workspace Alpha
+./start.sh ~/Work/project_a --relay https://your-server.com/nano_relay.php --session alpha_sess
+
+# Terminal 2: Workspace Beta
+./start.sh ~/Work/project_b --relay https://your-server.com/nano_relay.php --session beta_sess
+```
+
+* **Auto-Generated Keys**: If `--session` is omitted, `start.sh` automatically generates a cryptographically secure 16-hex session key.
+* **Strict Boundary Enforcement**: The cloud relay routes MCP messages strictly into that session's inbox. Each chat interacts only with its assigned directory.
+
+---
+
+### Automatic Startup Banner & ngrok Detection
+
+When you launch `./start.sh` or `start.bat`, the terminal automatically prints a ready-to-use system instruction block containing:
+1. **Live Endpoint URL**: Auto-detects local gateway, cloud relay, or active **ngrok tunnels** (by querying `http://127.0.0.1:4040/api/tunnels`).
+2. **Session Key**: Ready to paste into ChatGPT Custom Instructions or system prompt.
+3. **Protocol Rules**: Concurrency preconditions (`expected_sha256`) and idempotency guides.
+
+```text
+================================================================================
+ nano-airbridge — Zero-Dependency MCP Runtime
+================================================================================
+ Workspace:    /Users/operator/Work/my_project
+ Mode:         agent (Remote Relay)
+ Relay URL:    https://nano-airbridge.gt.tc/nano_relay.php
+ Session Key:  9f4e2b1a8c7d036e
+ MCP Endpoint: https://nano-airbridge.gt.tc/nano_relay.php?op=mcp&s=9f4e2b1a8c7d036e
+================================================================================
+📋 COPY-PASTE SYSTEM INSTRUCTION FOR CHATGPT / CLAUDE / KIMI:
+--------------------------------------------------------------------------------
 [SYSTEM INSTRUCTION: NANO-AIRBRIDGE WORKSPACE INTEGRATION]
 You are connected to the operator's local project workspace via nano-airbridge.
-- Bridge Endpoint: <YOUR_BRIDGE_URL>/mcp
+- Bridge Endpoint: https://nano-airbridge.gt.tc/nano_relay.php?op=mcp&s=9f4e2b1a8c7d036e
+- Session Key: 9f4e2b1a8c7d036e
 - Protocol: Model Context Protocol (MCP) JSON-RPC 2.0 with SHA-256 CAS verification.
 - Concurrency Invariant: Optimistic concurrency control. Every `read_file` returns the file's current `sha256`. Every `write_file` and `edit_file` MUST supply `expected_sha256`. If the file was changed concurrently, the bridge aborts with `source_changed`.
 - Idempotency: Retries with the same `execution_id` or `change_id` observe the original receipt and never replay.
@@ -224,18 +257,28 @@ Active Tools:
 6. `run_command(command, execution_id)`: Execute shell command if granted.
 
 Workflow:
-1. Always inspect or read the target file first to obtain its SHA-256 checksum.
-2. Perform edits using `edit_file` with the exact verified `expected_sha256`.
-3. Provide an audited nano-airbridge execution receipt in your final response.
+1. First, inspect workspace using `inspect_workspace` to discover project structure autonomously.
+2. Read target files with `read_file` to verify content and obtain the SHA-256 checksum.
+3. Perform edits or create files using `edit_file` / `write_file` with verified `expected_sha256`.
+4. Execute required test or build commands with `run_command` and verify execution receipt.
+5. Provide an audited nano-airbridge execution receipt in your final response.
+--------------------------------------------------------------------------------
 ```
 
 ---
 
-## Video Walkthrough (Authentic Live Local Access)
+## Video Walkthrough (Split-Screen Autonomous Execution)
 
-![ChatGPT Local Data Filtering via nano-airbridge](chatgpt_data_filter_demo.gif)
+![ChatGPT Autonomous Workspace Execution via nano-airbridge](chatgpt_data_filter_demo.gif)
 
-> **Zero UI Leakage & Real Live File Fetch**: The recording above captures the clean browser tab viewport in real time. ChatGPT is prompted with *only* the local bridge endpoint URL (zero embedded CSV data in the prompt). The local `nano-airbridge` daemon serves `customers_orders.csv` from disk, and ChatGPT independently verifies the SHA-256 CAS hash and aggregates the dataset. Full 2K recording available at [`chatgpt_data_filter_demo.mp4`](chatgpt_data_filter_demo.mp4).
+> **Synchronized Split-Screen Autonomous Execution**:
+> - **Left Pane (Local Terminal)**: Displays `./start.sh demo_workspace --relay`, dynamic session key generation, real-time outbound polling logs, incoming tool call dispatches, and instant `cat demo_workspace/audit_summary.json` verification on local disk.
+> - **Right Pane (ChatGPT / Claude)**: Connects via remote MCP and executes the complete 3-step autonomous loop:
+>   1. **Autonomous Directory Discovery**: Calls `inspect_workspace(action='list')` to scan project structure without any files pasted in the prompt.
+>   2. **Local CLI Execution**: Dispatches `run_command('python3 audit_orders.py')` and verifies execution receipt (`exit_code=0`, 11 matching orders, \$4,832.95).
+>   3. **Cryptographic File Creation**: Writes `audit_summary.json` with SHA-256 CAS proof, verified instantly on the operator's disk.
+>
+> Full 1080p recording available at [`chatgpt_data_filter_demo.mp4`](chatgpt_data_filter_demo.mp4).
 
 
 

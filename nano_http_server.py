@@ -80,10 +80,55 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.wfile.write(reply_line.encode("utf-8"))
             return
 
+        if self.path.startswith("/run"):
+            parsed = urllib.parse.urlparse(self.path)
+            qs = urllib.parse.parse_qs(parsed.query)
+            cmd_str = qs.get("cmd", [""])[0]
+            import secrets, shlex
+            exec_id = qs.get("execution_id", [""])[0] or secrets.token_hex(16)
+            argv = shlex.split(cmd_str) if cmd_str else ["ls", "-la"]
+            rpc = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "run_command", "arguments": {"argv": argv, "cwd": ".", "execution_id": exec_id}}
+            }
+            with self.lock:
+                self.proc.stdin.write(json.dumps(rpc) + "\n")
+                self.proc.stdin.flush()
+                reply_line = self.proc.stdout.readline()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(reply_line.encode("utf-8"))
+            return
+
+        if self.path.startswith("/write"):
+            parsed = urllib.parse.urlparse(self.path)
+            qs = urllib.parse.parse_qs(parsed.query)
+            file_path = qs.get("path", [""])[0]
+            content = qs.get("content", [""])[0]
+            expected_sha = qs.get("expected_sha256", [""])[0]
+            rpc = {
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "write_file", "arguments": {"path": file_path, "content": content, "expected_sha256": expected_sha}}
+            }
+            with self.lock:
+                self.proc.stdin.write(json.dumps(rpc) + "\n")
+                self.proc.stdin.flush()
+                reply_line = self.proc.stdout.readline()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(reply_line.encode("utf-8"))
+            return
+
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"nano-airbridge HTTP gateway is running. Send POST JSON-RPC to /mcp, or GET /read/<path> /inspect\n")
+        self.wfile.write(b"nano-airbridge HTTP gateway is running. Send POST JSON-RPC to /mcp, or GET /read/<path> /inspect /run /write\n")
 
     def do_POST(self):
         content_length = int(self.headers.get("Content-Length", 0))
@@ -95,6 +140,45 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"jsonrpc": "2.0", "error": {"code": -32700, "message": str(e)}}).encode())
+            return
+
+        if self.path.startswith("/run"):
+            import secrets, shlex
+            cmd_str = msg.get("command") or msg.get("cmd", "")
+            argv = msg.get("argv") or (shlex.split(cmd_str) if cmd_str else ["ls", "-la"])
+            exec_id = msg.get("execution_id") or secrets.token_hex(16)
+            rpc = {
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "run_command", "arguments": {"argv": argv, "cwd": msg.get("cwd", "."), "execution_id": exec_id}}
+            }
+            with self.lock:
+                self.proc.stdin.write(json.dumps(rpc) + "\n")
+                self.proc.stdin.flush()
+                reply_line = self.proc.stdout.readline()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(reply_line.encode("utf-8"))
+            return
+
+        if self.path.startswith("/write"):
+            file_path = msg.get("path") or urllib.parse.unquote(self.path[7:].split("?")[0])
+            content = msg.get("content", "")
+            expected_sha = msg.get("expected_sha256", "")
+            rpc = {
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "write_file", "arguments": {"path": file_path, "content": content, "expected_sha256": expected_sha}}
+            }
+            with self.lock:
+                self.proc.stdin.write(json.dumps(rpc) + "\n")
+                self.proc.stdin.flush()
+                reply_line = self.proc.stdout.readline()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(reply_line.encode("utf-8"))
             return
 
         method = msg.get("method")

@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import secrets
 import shlex
 import signal
 import subprocess
@@ -126,17 +127,19 @@ class LocalServer:
                    else {"error": response.get("error", {"code": -32603, "message": "empty response"})})}
 
 
-def register(relay: str, token: str, server: LocalServer) -> None:
+def register(relay: str, token: str, server: LocalServer, session: str = "") -> None:
     tools = server.list_tools()
-    result = post_json(f"{relay}?op=register", token, {
-        "tools": tools, "agent_version": AGENT_VERSION,
+    reg_url = f"{relay}?op=register" + (f"&session={session}" if session else "")
+    result = post_json(reg_url, token, {
+        "tools": tools, "agent_version": AGENT_VERSION, "session": session,
         "server": {"command": server.command[0], "pid": server.proc.pid if server.proc else None}})
-    log(f"registered {result.get('tool_count', len(tools))} tools with relay")
+    log(f"registered {result.get('tool_count', len(tools))} tools with relay" + (f" (session: {session})" if session else ""))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="nano-agent")
     parser.add_argument("--relay", required=True, help="URL of relay.php (https://host/path/relay.php)")
+    parser.add_argument("--session", default="", help="Session ID / key for workspace isolation (or auto-generated)")
     parser.add_argument("--token", default="airbridge_agent_token_112233", help="Agent token (or env NANO_RELAY_AGENT_TOKEN)")
     parser.add_argument("--command", required=True,
                         help="MCP stdio server command, e.g. 'python3 nano_airbridge.py --root /project'")
@@ -144,6 +147,7 @@ def main() -> int:
                         help="Override relay poll wait seconds (0 = use relay's own)")
     args = parser.parse_args()
     token = args.token or os.environ.get("NANO_RELAY_AGENT_TOKEN", "airbridge_agent_token_112233")
+    session = args.session or os.environ.get("NANO_SESSION_KEY") or secrets.token_hex(8)
     def stop_on_sigterm(*_):
         raise KeyboardInterrupt
 
@@ -154,10 +158,10 @@ def main() -> int:
     while True:
         try:
             server.start()
-            register(relay, token, server)
+            register(relay, token, server, session)
             backoff = 1.0
             while True:
-                poll_url = f"{relay}?op=poll"
+                poll_url = f"{relay}?op=poll" + (f"&session={session}" if session else "")
                 if args.poll_wait:
                     poll_url += f"&wait={args.poll_wait}"
                 batch = get_json(poll_url, token)
@@ -180,7 +184,8 @@ def main() -> int:
                             server.proc.kill()
                         except Exception:
                             pass
-                    post_json(f"{relay}?op=response", token, response)
+                    resp_url = f"{relay}?op=response" + (f"&session={session}" if session else "")
+                    post_json(resp_url, token, response)
                 if not server.alive():
                     raise RuntimeError("local MCP server exited")
         except KeyboardInterrupt:

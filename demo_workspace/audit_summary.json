@@ -1,0 +1,18 @@
+{
+  "audit_version": "1.0",
+  "workspace": "demo_workspace",
+  "dataset": "customers_orders.csv",
+  "total_records": 25,
+  "filter_criteria": {
+    "status": "Delivered",
+    "min_total_amount": 250.0
+  },
+  "matching_orders": 11,
+  "total_qualifying_revenue": 4832.95,
+  "verified_by": "nano-airbridge",
+  "execution_receipt": {
+    "command": "python3 audit_orders.py",
+    "exit_code": 0,
+    "sha256": "8e9b97690190a8445f04bd4b9c3d129c32f4e40f43412865125eb12f40ff72c2"
+  }
+}

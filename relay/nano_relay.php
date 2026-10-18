@@ -82,9 +82,30 @@ function relay_config(): array
     return $config = $env;
 }
 
-function data_dir(string $sub): string
+function clean_session(string $s): string
 {
-    $dir = __DIR__ . "/data/" . $sub;
+    $out = "";
+    $len = strlen($s);
+    for ($i = 0; $i < $len; $i++) {
+        $c = $s[$i];
+        if (ctype_alnum($c) || $c === "-" || $c === "_") {
+            $out .= $c;
+        }
+    }
+    return substr($out, 0, 64);
+}
+
+function request_session(): string
+{
+    $raw = (string) ($_GET["session"] ?? ($_SERVER["HTTP_X_SESSION_ID"] ?? ""));
+    return clean_session($raw);
+}
+
+function data_dir(string $sub, string $session = ""): string
+{
+    $clean = clean_session($session);
+    $base = $clean !== "" ? __DIR__ . "/data/sessions/" . $clean : __DIR__ . "/data";
+    $dir = $base . "/" . $sub;
     if (!is_dir($dir)) {
         @mkdir($dir, 0700, true);
         @file_put_contents(__DIR__ . "/data/.htaccess", "Require all denied\nDeny from all\n");
@@ -170,11 +191,11 @@ function rpc_tool_failure($id, string $code, string $message, string $effect): a
 // Queue mechanics
 // ---------------------------------------------------------------------------
 
-function housekeep(): void
+function housekeep(string $session = ""): void
 {
     $cutoff = time() - STALE_SECONDS;
     foreach (["queue", "inflight", "responses"] as $sub) {
-        foreach ((array) glob(data_dir($sub) . "/*.json") as $file) {
+        foreach ((array) glob(data_dir($sub, $session) . "/*.json") as $file) {
             if (@filemtime($file) < $cutoff) {
                 @unlink($file);
             }
@@ -182,9 +203,9 @@ function housekeep(): void
     }
 }
 
-function enqueue(string $method, $params, $originalId): array
+function enqueue(string $method, $params, $originalId, string $session = ""): array
 {
-    $dir = data_dir("queue");
+    $dir = data_dir("queue", $session);
     if (count((array) glob($dir . "/*.json")) >= QUEUE_MAX) {
         return rpc_tool_failure($originalId, "relay_busy",
             "The relay queue is full; the local agent has not drained pending work.",
@@ -205,18 +226,18 @@ function enqueue(string $method, $params, $originalId): array
     return $record;
 }
 
-function claim_pending(int $limit): array
+function claim_pending(int $limit, string $session = ""): array
 {
     $claimed = [];
-    $files = (array) glob(data_dir("queue") . "/*.json");
+    $files = (array) glob(data_dir("queue", $session) . "/*.json");
     sort($files);
     foreach ($files as $file) {
         if (count($claimed) >= $limit) {
             break;
         }
         $name = basename($file);
-        if (@rename($file, data_dir("inflight") . "/" . $name)) {
-            $record = json_decode((string) @file_get_contents(data_dir("inflight") . "/" . $name), true);
+        if (@rename($file, data_dir("inflight", $session) . "/" . $name)) {
+            $record = json_decode((string) @file_get_contents(data_dir("inflight", $session) . "/" . $name), true);
             if (is_array($record)) {
                 $claimed[] = $record;
             }
@@ -232,7 +253,28 @@ function claim_pending(int $limit): array
 function handle_mcp(string $secret): void
 {
     $config = relay_config();
-    if (!hash_equals((string) $config["client_secret"], $secret)) {
+    $session = "";
+    $cleanSecret = clean_session($secret);
+    if (hash_equals((string) $config["client_secret"], $secret)) {
+        $session = request_session();
+        if ($session === "") {
+            $sessionDirs = (array) glob(__DIR__ . "/data/sessions/*");
+            $newestTime = 0;
+            $newestSession = "";
+            foreach ($sessionDirs as $sDir) {
+                $sAlive = (int) (@file_get_contents($sDir . "/meta/alive") ?: 0);
+                if ($sAlive > $newestTime) {
+                    $newestTime = $sAlive;
+                    $newestSession = basename($sDir);
+                }
+            }
+            if ($newestSession !== "") {
+                $session = $newestSession;
+            }
+        }
+    } elseif ($cleanSecret !== "" && (is_dir(__DIR__ . "/data/sessions/" . $cleanSecret) || is_file(__DIR__ . "/data/sessions/" . $cleanSecret . "/meta/agent.json"))) {
+        $session = $cleanSecret;
+    } else {
         respond_json(401, ["error" => "bad_client_secret"]);
     }
     $message = read_body();
@@ -263,21 +305,21 @@ function handle_mcp(string $secret): void
         respond_json(200, ["jsonrpc" => "2.0", "id" => $id, "result" => []]);
     }
     if ($method === "tools/list") {
-        $meta = json_decode((string) @file_get_contents(data_dir("meta") . "/agent.json"), true);
+        $meta = json_decode((string) @file_get_contents(data_dir("meta", $session) . "/agent.json"), true);
         respond_json(200, ["jsonrpc" => "2.0", "id" => $id, "result" => [
             "tools" => is_array($meta) ? ($meta["tools"] ?? []) : [],
         ]]);
     }
 
     // Everything else goes to the local agent through the queue.
-    housekeep();
-    $queued = enqueue($method, $params, $id);
+    housekeep($session);
+    $queued = enqueue($method, $params, $id, $session);
     if (!isset($queued["internal_id"])) { // pre-queued bounded failure envelope
         respond_json(200, $queued);
     }
 
-    $responseFile = data_dir("responses") . "/" . $queued["internal_id"] . ".json";
-    $inflightFile = data_dir("inflight") . "/" . $queued["internal_id"] . ".json";
+    $responseFile = data_dir("responses", $session) . "/" . $queued["internal_id"] . ".json";
+    $inflightFile = data_dir("inflight", $session) . "/" . $queued["internal_id"] . ".json";
     $deadline = time() + (int) $config["mcp_wait"];
     while (time() < $deadline) {
         clearstatcache();
@@ -315,30 +357,36 @@ function handle_register(): void
     if (!is_array($tools)) {
         respond_json(400, ["error" => "invalid_tools"]);
     }
+    $session = request_session();
+    if ($session === "" && isset($body["session"])) {
+        $session = clean_session((string) $body["session"]);
+    }
     $meta = [
         "tools" => $tools,
         "server" => $body["server"] ?? null,
         "registered_at" => time(),
         "agent_version" => (string) ($body["agent_version"] ?? ""),
+        "session" => $session,
     ];
-    @file_put_contents(data_dir("meta") . "/agent.json", json_encode($meta), LOCK_EX);
-    respond_json(200, ["ok" => true, "tool_count" => count($tools)]);
+    @file_put_contents(data_dir("meta", $session) . "/agent.json", json_encode($meta), LOCK_EX);
+    respond_json(200, ["ok" => true, "tool_count" => count($tools), "session" => $session]);
 }
 
 function handle_poll(): void
 {
     require_agent_token();
+    $session = request_session();
     $wait = (int) ($_GET["wait"] ?? relay_config()["poll_wait"]);
     $wait = max(1, min(25, $wait));
     $deadline = time() + $wait;
     do {
-        housekeep();
-        $claimed = claim_pending(4);
+        housekeep($session);
+        $claimed = claim_pending(4, $session);
         if ($claimed !== []) {
-            @file_put_contents(data_dir("meta") . "/alive", (string) time());
+            @file_put_contents(data_dir("meta", $session) . "/alive", (string) time());
             respond_json(200, ["requests" => $claimed]);
         }
-        @file_put_contents(data_dir("meta") . "/alive", (string) time()); // presence beacon
+        @file_put_contents(data_dir("meta", $session) . "/alive", (string) time()); // presence beacon
         usleep(500_000);
     } while (time() < $deadline);
     respond_json(200, ["requests" => []]);
@@ -347,6 +395,7 @@ function handle_poll(): void
 function handle_response(): void
 {
     require_agent_token();
+    $session = request_session();
     $body = read_body();
     $id = (string) ($body["id"] ?? "");
     if ($id === "" || !preg_match('/^r[0-9a-f]{22}$/', $id)) {
@@ -361,20 +410,53 @@ function handle_response(): void
     } else {
         $stored["error"] = $body["error"];
     }
-    @file_put_contents(data_dir("responses") . "/" . $id . ".json", json_encode($stored), LOCK_EX);
-    @unlink(data_dir("inflight") . "/" . $id . ".json");
+    @file_put_contents(data_dir("responses", $session) . "/" . $id . ".json", json_encode($stored), LOCK_EX);
+    @unlink(data_dir("inflight", $session) . "/" . $id . ".json");
     respond_json(200, ["ok" => true]);
 }
 
 function handle_healthz(): void
 {
+    $session = request_session();
+    if ($session !== "") {
+        $alive = @file_get_contents(data_dir("meta", $session) . "/alive");
+        $meta = json_decode((string) @file_get_contents(data_dir("meta", $session) . "/agent.json"), true);
+        respond_json(200, [
+            "relay" => "nano-airbridge-relay", "version" => RELAY_VERSION,
+            "session" => $session,
+            "agent_registered" => is_array($meta),
+            "agent_last_seen" => $alive ? (int) $alive : null,
+            "agent_online" => $alive !== false && (time() - (int) $alive) < 60,
+        ]);
+    }
+
     $alive = @file_get_contents(data_dir("meta") . "/alive");
     $meta = json_decode((string) @file_get_contents(data_dir("meta") . "/agent.json"), true);
+    $isOnline = $alive !== false && (time() - (int) $alive) < 60;
+    $isRegistered = is_array($meta);
+    $lastSeen = $alive ? (int) $alive : null;
+
+    $sessionDirs = (array) glob(__DIR__ . "/data/sessions/*");
+    foreach ($sessionDirs as $sDir) {
+        $sAlive = @file_get_contents($sDir . "/meta/alive");
+        $sMeta = @file_get_contents($sDir . "/meta/agent.json");
+        if ($sAlive && (time() - (int) $sAlive) < 60) {
+            $isOnline = true;
+            if ($lastSeen === null || (int) $sAlive > $lastSeen) {
+                $lastSeen = (int) $sAlive;
+            }
+        }
+        if ($sMeta) {
+            $isRegistered = true;
+        }
+    }
+
     respond_json(200, [
         "relay" => "nano-airbridge-relay", "version" => RELAY_VERSION,
-        "agent_registered" => is_array($meta),
-        "agent_last_seen" => $alive ? (int) $alive : null,
-        "agent_online" => $alive !== false && (time() - (int) $alive) < 60,
+        "session" => "any",
+        "agent_registered" => $isRegistered,
+        "agent_last_seen" => $lastSeen,
+        "agent_online" => $isOnline,
     ]);
 }
 
