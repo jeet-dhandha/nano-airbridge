@@ -1,324 +1,262 @@
-# nano-airbridge — Zero-Dependency MCP Server & Cloud Relay
+# nano-airbridge — Standalone Go MCP Server & Public Tunnel
 
-A **single-file, stdlib-only Model Context Protocol (MCP) server and free cloud relay** distilled from
-[OpenMachine (OM Core)](https://github.com/OpenMachineLabs/openmachine)
-that lets **any MCP-capable chat (Claude, Cursor, Windsurf, or web ChatGPT)** work on **one local project** — with OM's
-safety kernel preserved and its complex remote/fleet/GitHub machinery removed.
+A **single static binary Model Context Protocol (MCP) server** written in pure Go that lets **any AI chat (ChatGPT, Claude, Cursor, or Windsurf)** work directly on **one local project workspace** — with strict path confinement, SHA-256 CAS optimistic concurrency, and zero external runtime dependencies.
 
-```text
-                                  ┌─── stdio (local) ─── Claude Desktop / Cursor / Windsurf
-                                  │
-Your Project Directory ◀──▶ nano_airbridge.py
-                                  ▲
-                                  │ stdio
-                            nano_agent.py (user machine, outbound-only long-poll)
-                                  │
-                                  ▼ HTTPS
-                         nano_relay.php (free PHP host or Cloudflare Worker)
-                                  ▲
-                                  │ HTTPS
-                            ChatGPT Cloud (Custom Connector)
-```
-
-* `nano_airbridge.py` — the server (Python 3.11+ stdlib only, zero dependencies, **0 network imports**)
-* `relay/nano_relay.php` — one-file hosted relay for free PHP hosting or Cloudflare Workers
-* `relay/nano_agent.py` — outbound-only bridge agent (no ngrok, no port-forwarding, no binaries)
-* `audit.py` — static transparency audit verifying zero network calls and strict containment
-* `smoke_test.py` — 33/33 end-to-end protocol, concurrency, and safety tests
-* `config.toml` — optional configuration; CLI flags also work
+> **Zero Python • Zero PHP • Zero Node Runtime Dependencies • Zero Account Sign-ups**
 
 ---
+
+## Split-Screen Autonomous Demo
+
+Watch ChatGPT autonomously discover workspace files, read a customer orders database, verify the whole-file SHA-256 CAS hash, filter qualifying delivered orders ($4,832.95), and publish the verified summary back to local disk:
+
+![ChatGPT Autonomous Data Filter Demo](chatgpt_data_filter_demo.gif)
+
+*(Full 1080p recording available in [chatgpt_data_filter_demo.mp4](chatgpt_data_filter_demo.mp4))*
+
+---
+
+## Architecture
+
+```text
+[Web AI: ChatGPT / Claude]
+          │
+          │ HTTPS (public tunnel)
+          ▼
+   localtunnel / ngrok (zero accounts, no sign-up)
+          │
+          │ HTTP JSON-RPC 2.0 (port 8899)
+          ▼
+  bin/nano-airbridge (single static Go binary)
+          │
+          │ Local Disk (confined to --root)
+          ▼
+   Your Project Workspace (SHA-256 CAS Preconditions)
+```
+
+* **`bin/nano-airbridge`** — Single static Go binary (zero runtime dependencies, no Python, no PHP).
+* **`start.sh` / `start.bat`** — One-click launcher that starts the binary and auto-spawns a free public tunnel.
+* **`src/go/main.go`** — Clean, auditable pure Go source code (stdlib only, zero third-party packages).
+* **`build.sh` / `build.bat`** — 1-command build scripts to compile for host or cross-compile all platforms.
+* **`test_suite.sh`** — 10/10 end-to-end automated protocol, CAS concurrency, and security tests.
 
 ---
 
 ## Quick Start — Zero Installation Required
 
-Choose the runtime that fits your machine. **No Python, no PHP, and no Node.js required.**
+Precompiled static binaries for all major platforms are included in `./bin/`. Choose your operating system:
 
-### 1. Native Standalone Executables (Zero Runtime Dependencies)
-Precompiled, single-file static binaries for Windows, macOS, and Linux:
-
-* **Windows**:
-  ```cmd
-  bin\nano-airbridge.exe --root C:\path\to\project --port 8899 --enable-writes --enable-execution
-  :: Or simply double-click start.bat
-  ```
-* **macOS / Linux**:
-  ```bash
-  ./bin/nano-airbridge --root /path/to/project --port 8899 --enable-writes --enable-execution
-  # Or run ./start.sh
-  ```
-
-### 2. Pure OS Scripts (Zero Installs, Native Built-In)
-* **Windows (Native PowerShell)**:
-  Pre-installed on every Windows 10 and 11 PC. Built on Windows .NET `HttpListener`:
-  ```powershell
-  powershell -ExecutionPolicy Bypass -File .\nano-airbridge.ps1 -Root .\my_project -Port 8899
-  ```
-* **macOS / Linux (Pure POSIX Bash)**:
-  Built on native `bash`, `curl`, and `shasum`:
-  ```bash
-  ./nano-airbridge.sh /path/to/project 8899
-  ```
-
-### 3. Python 3 Stdlib (Zero Pip Dependencies)
-If you already have Python 3.11+:
+### macOS / Linux
 ```bash
-# Read-only inspection (safest)
-python3 nano_airbridge.py --root /path/to/project
-
-# Full read/write/execution
-python3 nano_airbridge.py --root /path/to/project --enable-writes --enable-execution
+./start.sh /path/to/project
 ```
 
-Keep `--root` to the smallest project directory you want exposed. The server
-never touches anything outside it (and strictly refuses `.git`, `.env`, keys, and credentials).
+### Windows (cmd / PowerShell)
+```cmd
+start.bat C:\path\to\project
+```
+
+That's it! `start.sh` launches the native Go binary, detects your environment, automatically spins up a free public tunnel via `localtunnel` (`https://<subdomain>.loca.lt/mcp`), and prints the copy-paste system prompt ready for ChatGPT or Claude.
+
+To run purely locally without any public tunnel, pass `--no-tunnel`:
+```bash
+./start.sh /path/to/project --no-tunnel
+# Binds strictly to http://localhost:8899/mcp
+```
 
 ---
 
-## The 9 Native Tools
+## Build Your Own Binary from Source
 
-| Tool | What it does |
-| --- | --- |
-| `get_capabilities` | Inspect active operator grants, root identity hash, and limits |
-| `inspect_workspace` | `list` files or `search` text (bounded, glob-filtered, ignores hidden credentials) |
-| `read_file` | Paged UTF-8 read (32 KiB pages) + whole-file SHA-256 hash |
-| `write_file` | Whole-file publish under SHA-256 precondition (`""` = new file CAS) |
-| `edit_file` | Exact fragment replacement, `dry_run` preview, change receipts |
-| `run_command` | Start a command in the root with caller-chosen `execution_id` receipt |
-| `read_execution` | Read original execution receipt + output cursor (never replays) |
-| `cancel_execution` | Terminate the owned process session (kills process group) |
-| `list_executions` | Find original execution IDs (crash recovery) |
+You can easily build `nano-airbridge` from source using the standard Go compiler (`go 1.20+`).
+
+### 1. Build for Your Current Machine
+```bash
+# macOS / Linux
+./build.sh
+
+# Windows
+build.bat
+```
+This compiles `src/go/main.go` and places the executable directly into `./bin/nano-airbridge` (or `./bin/nano-airbridge.exe`).
+
+### 2. Cross-Compile All Platforms
+To build release binaries for macOS (Apple Silicon + Intel), Linux (x86_64 + ARM64), and Windows (x86_64):
+```bash
+./build.sh all
+```
+
+Output binaries placed in `./bin/`:
+* `bin/nano-airbridge` (macOS arm64 - Apple Silicon M1/M2/M3/M4)
+* `bin/nano-airbridge-darwin-amd64` (macOS x86_64 - Intel)
+* `bin/nano-airbridge-linux-amd64` (Linux x86_64)
+* `bin/nano-airbridge-linux-arm64` (Linux ARM64 / Raspberry Pi / AWS Graviton)
+* `bin/nano-airbridge.exe` (Windows x86_64)
+
+### 3. Manual Build via Go CLI
+If you prefer building directly with `go`:
+```bash
+# macOS / Linux
+go build -ldflags="-s -w" -o bin/nano-airbridge src/go/main.go
+
+# Windows
+go build -ldflags="-s -w" -o bin/nano-airbridge.exe src/go/main.go
+```
+
+Where to place the binary:
+`start.sh` and `start.bat` look for binaries in `./bin/nano-airbridge` (or `./bin/nano-airbridge.exe`). As long as the binary is in `./bin/`, the launcher automatically finds it.
 
 ---
 
-## Core Safety Invariants (from OM Core)
+## Connecting Remote AI Chats (ChatGPT, Claude, Kimi)
 
-* **Explicit operator grants** — `--enable-writes` / `--enable-execution` default to `false`. Without explicit flags, the server is strictly read-only.
-* **SHA-256 preconditions (CAS concurrency)** — every read returns the whole-file hash; every write/edit must echo it. If the file changed in the background, edits fail with `source_changed` and have **no effect**.
-* **Observe-never-replay** — `execution_id` and `change_id` are caller idempotency keys: identical retries return the original record; conflicting reuse fails with `execution_conflict`.
-* **Path confinement** — relative paths only, no traversal, `O_NOFOLLOW` directory walk (symlinks refused), credentials (`.git`, `.env`, private keys) blocked.
-* **POSIX session containment** — each command runs with `start_new_session=True`; cancel or timeout signals the whole process group.
-* **Private state** — `~/.nano-airbridge` at mode 0700, atomic JSON receipts, `flock` leases.
-* **Secret redaction** — API tokens, private keys, and passwords masked in returned text.
-* **Bounded everything** — bounded page sizes (32 KiB), max scan entries, timeouts, and output cursors.
+Remote AI web chats cannot access `localhost` directly. `start.sh` automatically provides a secure public gateway:
+
+1. **Automatic Zero-Account Public Tunnel**:
+   - If `npx` is available, `start.sh` automatically launches a free `localtunnel` (`https://<subdomain>.loca.lt/mcp`).
+   - Automated web crawlers (like OpenAI's fetch bot) can access this endpoint directly with zero interstitial blocks.
+
+2. **Smart OS Detection**:
+   If Node.js / `npx` is not installed yet, `start.sh` detects your operating system and prints the exact 1-line installation command:
+   * **macOS (Homebrew)**: `brew install node`
+   * **Ubuntu / Debian**: `sudo apt update && sudo apt install -y nodejs npm`
+   * **Fedora / RHEL**: `sudo dnf install -y nodejs npm`
+   * **Arch Linux**: `sudo pacman -S nodejs npm`
+   * **Windows**: `winget install OpenJS.NodeJS` (or download from [nodejs.org](https://nodejs.org/))
+
+   *Note: `start.sh` actively searches version managers (`nvm`, `fnm`, `volta`, `asdf`, Homebrew) — once installed, running `./start.sh` auto-detects `npx` immediately without restarting your shell!*
+
+3. **Verify Health**:
+   ```bash
+   curl https://<your-subdomain>.loca.lt/healthz
+   # => {"server":"nano-airbridge-go","status":"ok","version":"0.2.0"}
+   ```
 
 ---
 
-## Connecting Clients
+## Connecting Local Desktop Clients (Claude Desktop, Cursor, Zed)
 
-### 1. Claude Desktop
-Add to `claude_desktop_config.json` (Settings → Developer → Edit Config):
+Add `nano-airbridge` to your client's MCP configuration:
 
+### Claude Desktop (`claude_desktop_config.json`)
 ```json
 {
   "mcpServers": {
     "nano-airbridge": {
-      "command": "python3",
+      "command": "/path/to/nano-airbridge/bin/nano-airbridge",
       "args": [
-        "/path/to/nano-airbridge/nano_airbridge.py",
-        "--root", "/path/to/project",
-        "--enable-writes",
-        "--enable-execution"
+        "-root", "/path/to/project",
+        "-enable-writes",
+        "-enable-execution"
       ]
     }
   }
 }
 ```
 
-### 2. Cursor / Windsurf / Zed / VS Code
-* **Cursor**: Add to `.cursor/mcp.json` or `~/.cursor/mcp.json`.
-* **Windsurf**: Add to `~/.codeium/windsurf/mcp_config.json`.
-* **Claude Code** (CLI):
-  ```bash
-  claude mcp add nano-airbridge -- python3 /path/to/nano_airbridge.py --root /path/to/project --enable-writes --enable-execution
-  ```
-
----
-
-### 3. Remote Web Chats & Agentic Platforms (ChatGPT, Kimi, Claude, GLM, Qwen)
-
-Remote web AI chats cannot execute commands on your local machine directly. `nano-airbridge` provides **two battle-tested pathways** to connect them:
-
-```text
-[Option A: Instant Developer Gateway (localtunnel / ngrok)]
-ChatGPT / Kimi / Claude ──HTTPS──> localtunnel / ngrok ──HTTP:8899──> nano_http_server.py ──stdio──> nano_airbridge.py
-
-[Option B: 100% Free Permanent Cloud Relay]
-ChatGPT Custom Connector ──HTTPS──> nano_relay.php (InfinityFree / cPanel)
-                                          ▲
-                                   HTTPS (outbound long-poll)
-                                          │
-                                    nano_agent.py ──stdio──> nano_airbridge.py
+### Cursor (`~/.cursor/mcp.json`)
+```json
+{
+  "mcpServers": {
+    "nano-airbridge": {
+      "url": "http://localhost:8899/mcp"
+    }
+  }
+}
 ```
 
 ---
 
-#### Option A: Instant Developer Gateway (localtunnel / ngrok + `nano_http_server.py`)
-*Best for: Zero-account public testing in under 30 seconds.*
+## The 6 Native Tools
 
-1. **Start the local gateway** (automatically launches free localtunnel if `npx` is present):
-   ```bash
-   # macOS / Linux
-   ./start.sh /path/to/project
-
-   # Windows
-   start.bat C:\path\to\project
-   ```
-   * **Zero accounts, zero signups**: Launches `localtunnel` automatically. Your terminal displays a ready-to-use public HTTPS endpoint: `https://<subdomain>.loca.lt/mcp`.
-   * **Smart OS Detection**: If Node.js/npx is not yet installed, `start.sh` detects your OS and prints the exact 1-line installation command:
-     - macOS: `brew install node`
-     - Ubuntu / Debian: `sudo apt update && sudo apt install -y nodejs npm`
-     - Fedora / RHEL: `sudo dnf install -y nodejs`
-     - Arch Linux: `sudo pacman -S nodejs npm`
-     - Windows: `winget install OpenJS.NodeJS`
-   * **Strictly Local Mode**: Pass `--no-tunnel` to keep the server confined to `http://localhost:8899/mcp`.
-   * **Existing ngrok**: If ngrok is already running locally on port 4040, `start.sh` automatically uses it.
-
-2. **Verify live endpoint**:
-   ```bash
-   curl https://<your-subdomain>.loca.lt/healthz
-   # => {"status":"ok","server":"nano-airbridge-http"}
-   ```
+| Tool | Parameters | Description |
+| --- | --- | --- |
+| `inspect_workspace` | *(none)* | Scans directory entries, file names, and sizes. Automatically excludes hidden credentials (`.env`, `.git`, `.key`, `.pem`). |
+| `read_file` | `path` | Reads file content and returns whole-file SHA-256 CAS hash. |
+| `write_file` | `path`, `content`, `expected_sha256` | Creates or overwrites file under CAS precondition (`""` for new files). Fails with `source_changed` if file was modified concurrently. |
+| `edit_file` | `path`, `old_text`, `new_text`, `expected_sha256` | Replaces single contiguous text occurrence under verified CAS precondition. |
+| `run_command` | `command` or `argv` | Executes shell command inside workspace root when `-enable-execution` is granted. Returns stdout, stderr, and exit code. |
+| `get_capabilities` | *(none)* | Inspects server version, workspace root, active grants, and limits. |
 
 ---
 
-#### Option B: 100% Free Remote Cloud Relay (`nano_relay.php` / Python Cloud Relay)
-*Best for: Zero ongoing cost, zero tunnels/ngrok, works behind strict corporate firewalls and NAT without port forwarding.*
+## Core Safety Invariants
 
-1. **Deploy the relay server once** on your web host:
-   * **PHP Web Hosting** (cPanel, shared hosting, or free host): Upload `relay/nano_relay.php` to your `/public_html` or `/htdocs` folder.
-   * **Zero-Dep Python Hosting** (Render, Railway, Fly.io, VPS): Run `python3 relay/nano_relay_server.py --port 8080`.
-   * Live reference endpoint: `https://nano-airbridge.gt.tc/nano_relay.php`
-
-2. **Start the local bridge passing your relay URL**:
-   Simply pass `--relay <URL>` in your startup command:
-
-   ```bash
-   # macOS / Linux
-   ./start.sh /path/to/project --relay https://your-server.com/nano_relay.php
-
-   # Windows (cmd / PowerShell)
-   start.bat C:\path\to\project --relay https://your-server.com/nano_relay.php
-
-   # Standalone Native Binary (Zero Python, Zero PHP)
-   ./bin/nano-airbridge --root /path/to/project --relay https://your-server.com/nano_relay.php
-   ```
-
-   *No open ports, no ngrok tunnel, and no local PHP required. The local machine connects via outbound-only HTTPS polling.*
-
-3. **Connect ChatGPT / Claude as Custom MCP Connector**:
-   * In ChatGPT → **Settings → Connectors → Create custom connector** (or Claude MCP connector):
-   * Endpoint URL: `https://your-server.com/nano_relay.php?op=mcp&s=YOUR_SESSION_KEY`
+1. **Explicit Operator Grants**: Writing (`-enable-writes`) and command execution (`-enable-execution`) default to `false`. Without explicit flags, the workspace is strictly read-only.
+2. **SHA-256 Preconditions (CAS Concurrency)**: Every `read_file` returns the file's current SHA-256 hash. Every `write_file` and `edit_file` MUST supply `expected_sha256`. If the file was changed in the background, edits fail with `source_changed` and have zero effect on disk.
+3. **Strict Path Confinement**: Relative paths only. Directory traversal (`..`), absolute paths, and symlinks are strictly denied with `400 Bad Request`.
+4. **Credential Masking**: Sensitive files (`.git`, `.env`, `.pem`, `.key`, `id_rsa`) are filtered from scans and blocked from reading.
 
 ---
 
-### Multi-Session Isolation & Dynamic Sessions
+## Copy-Paste System Prompt for AI Chats
 
-Need to work across multiple projects or terminals concurrently? `nano-airbridge` features **zero-collision session isolation**:
+Copy and paste this instruction block into ChatGPT, Claude, or Kimi:
 
-```bash
-# Terminal 1: Workspace Alpha
-./start.sh ~/Work/project_a --relay https://your-server.com/nano_relay.php --session alpha_sess
-
-# Terminal 2: Workspace Beta
-./start.sh ~/Work/project_b --relay https://your-server.com/nano_relay.php --session beta_sess
-```
-
-* **Auto-Generated Keys**: If `--session` is omitted, `start.sh` automatically generates a cryptographically secure 16-hex session key.
-* **Strict Boundary Enforcement**: The cloud relay routes MCP messages strictly into that session's inbox. Each chat interacts only with its assigned directory.
-
----
-
-### Automatic Startup Banner & ngrok Detection
-
-When you launch `./start.sh` or `start.bat`, the terminal automatically prints a ready-to-use system instruction block containing:
-1. **Live Endpoint URL**: Auto-detects local gateway, cloud relay, or active **ngrok tunnels** (by querying `http://127.0.0.1:4040/api/tunnels`).
-2. **Session Key**: Ready to paste into ChatGPT Custom Instructions or system prompt.
-3. **Protocol Rules**: Concurrency preconditions (`expected_sha256`) and idempotency guides.
-
-```text
-================================================================================
- nano-airbridge — Zero-Dependency MCP Runtime
-================================================================================
- Workspace:    /Users/operator/Work/my_project
- Mode:         agent (Remote Relay)
- Relay URL:    https://nano-airbridge.gt.tc/nano_relay.php
- Session Key:  9f4e2b1a8c7d036e
- MCP Endpoint: https://nano-airbridge.gt.tc/nano_relay.php?op=mcp&s=9f4e2b1a8c7d036e
-================================================================================
-📋 COPY-PASTE SYSTEM INSTRUCTION FOR CHATGPT / CLAUDE / KIMI:
---------------------------------------------------------------------------------
+```markdown
 [SYSTEM INSTRUCTION: NANO-AIRBRIDGE WORKSPACE INTEGRATION]
 You are connected to the operator's local project workspace via nano-airbridge.
-- Bridge Endpoint: https://nano-airbridge.gt.tc/nano_relay.php?op=mcp&s=9f4e2b1a8c7d036e
-- Session Key: 9f4e2b1a8c7d036e
+- Bridge Endpoint: <YOUR_PUBLIC_TUNNEL_URL>/mcp
 - Protocol: Model Context Protocol (MCP) JSON-RPC 2.0 with SHA-256 CAS verification.
 - Concurrency Invariant: Optimistic concurrency control. Every `read_file` returns the file's current `sha256`. Every `write_file` and `edit_file` MUST supply `expected_sha256`. If the file was changed concurrently, the bridge aborts with `source_changed`.
-- Idempotency: Retries with the same `execution_id` or `change_id` observe the original receipt and never replay.
 
 Active Tools:
-1. `get_capabilities`: Inspect active grants, limits, and workspace identity.
-2. `inspect_workspace(depth=2, include_hashes=True)`: List directories or search contents.
-3. `read_file(path, offset=0, limit=1000)`: Read file page and retrieve SHA-256 hash.
-4. `write_file(path, content, expected_sha256)`: Overwrite file (use expected_sha256="" for new file).
-5. `edit_file(path, old_text, new_text, expected_sha256)`: Contiguous string replacement.
-6. `run_command(command, execution_id)`: Execute shell command if granted.
+1. `inspect_workspace`: List workspace files.
+2. `read_file(path)`: Read file contents and retrieve whole-file SHA-256 checksum.
+3. `write_file(path, content, expected_sha256)`: Create or overwrite file under CAS precondition.
+4. `edit_file(path, old_text, new_text, expected_sha256)`: Contiguous text replacement.
+5. `run_command(command)`: Execute shell command inside workspace root.
 
 Workflow:
-1. First, inspect workspace using `inspect_workspace` to discover project structure autonomously.
-2. Read target files with `read_file` to verify content and obtain the SHA-256 checksum.
-3. Perform edits or create files using `edit_file` / `write_file` with verified `expected_sha256`.
-4. Execute required test or build commands with `run_command` and verify execution receipt.
-5. Provide an audited nano-airbridge execution receipt in your final response.
---------------------------------------------------------------------------------
+1. Inspect workspace to discover files: inspect_workspace.
+2. Read target file to get content and SHA-256 hash: read_file(path).
+3. Update files with verified hash: write_file / edit_file.
+4. Execute required test or build commands: run_command.
 ```
 
 ---
 
-## Video Walkthrough (Split-Screen Autonomous Execution)
+## Verification & Automated Test Suite
 
-![ChatGPT Autonomous Workspace Execution via nano-airbridge](chatgpt_data_filter_demo.gif)
-
-> **Synchronized Split-Screen Autonomous Execution**:
-> - **Left Pane (Local Terminal)**: Displays `./start.sh demo_workspace --relay`, dynamic session key generation, real-time outbound polling logs, incoming tool call dispatches, and instant `cat demo_workspace/audit_summary.json` verification on local disk.
-> - **Right Pane (ChatGPT / Claude)**: Connects via remote MCP and executes the complete 3-step autonomous loop:
->   1. **Autonomous Directory Discovery**: Calls `inspect_workspace(action='list')` to scan project structure without any files pasted in the prompt.
->   2. **Local CLI Execution**: Dispatches `run_command('python3 audit_orders.py')` and verifies execution receipt (`exit_code=0`, 11 matching orders, \$4,832.95).
->   3. **Cryptographic File Creation**: Writes `audit_summary.json` with SHA-256 CAS proof, verified instantly on the operator's disk.
->
-> Full 1080p recording available at [`chatgpt_data_filter_demo.mp4`](chatgpt_data_filter_demo.mp4).
-
-
-
----
-
-## Verification & Transparency Audit
-
-Run the static transparency auditor before trusting this package:
+Run the full end-to-end test suite (10/10 automated tests verifying health, inspect, CAS read/write/edit, concurrency conflict rejection, command execution, and path confinement):
 
 ```bash
-python3 audit.py
+./test_suite.sh
 ```
 
-It statically analyzes the runtime files to guarantee:
-* `nano_airbridge.py` contains **zero network code** (no sockets, no HTTP, cannot phone home).
-* `relay/nano_relay.php` contains **no outbound network capabilities** (no curl, no sockets, no exec/shell).
-* `relay/nano_agent.py` only connects to your explicitly configured `--relay` URL.
+Output:
+```text
+========================================================
+ nano-airbridge Go Standalone Binary Test Suite
+========================================================
+ [1/10] Testing /healthz...
+  ✓ Health check passed
+ [2/10] Testing /inspect...
+  ✓ Inspect workspace passed
+ [3/10] Testing MCP initialize...
+  ✓ MCP initialize passed
+ [4/10] Testing tools/list...
+  ✓ tools/list returned complete tool catalog
+ [5/10] Testing read_file with SHA-256 CAS...
+  ✓ read_file passed (SHA-256: 8c7bbd6d304be8ca4cdaced5ad93757d0a8e7a78095e19d08da103b90b9a7f28)
+ [6/10] Testing write_file CAS precondition...
+  ✓ write_file created file on disk under empty CAS precondition
+ [7/10] Testing edit_file...
+  ✓ edit_file successfully replaced string with verified hash
+ [8/10] Testing CAS concurrency conflict rejection (source_changed)...
+  ✓ Stale CAS hash correctly rejected with source_changed error
+ [9/10] Testing run_command...
+  ✓ run_command executed shell command and returned stdout
+ [10/10] Testing path confinement security...
+  ✓ Directory traversal (../) and credential paths (.env) strictly denied
 
-Run the protocol smoke test suite:
-```bash
-python3 smoke_test.py
+========================================================
+ ★ ALL 10 TESTS PASSED (100% SUCCESS) — ZERO PYTHON, ZERO PHP
+========================================================
 ```
 
 ---
 
-## Agent Skill Integration
+## License
 
-This repository also includes a native skill definition under [`skills/nano-airbridge/SKILL.md`](skills/nano-airbridge/SKILL.md) for automated agent frameworks (such as Antigravity, Claude Code, and Codex).
-
----
-
-## License & Attribution
-
-MIT License. Derived and distilled from [Open Machine (OM Core)](https://github.com/OpenMachineLabs/openmachine) — MIT © 2026 OpenMachineLabs. The local safety invariants and concurrency patterns are preserved; remote fleets, task databases, and service daemons have been cleanly eliminated.
+MIT License. Fork, inspect, and modify freely.

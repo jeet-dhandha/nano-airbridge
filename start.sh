@@ -1,17 +1,60 @@
 #!/usr/bin/env bash
-# nano-airbridge — One-click launcher for macOS and Linux
+# nano-airbridge — One-click launcher for macOS and Linux (Pure Go Standalone Binary)
+# Zero Python • Zero PHP • Zero Node Runtime Dependencies
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_CMD="python3"
+BIN_DIR="$SCRIPT_DIR/bin"
 
-if ! command -v python3 &>/dev/null; then
-    if command -v python &>/dev/null; then
-        PYTHON_CMD="python"
-    else
-        echo "Error: Python 3 is required. Please install Python 3." >&2
-        exit 1
+detect_native_binary() {
+    local os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    local arch="$(uname -m)"
+    local bin=""
+    if [[ "$os" == "darwin" ]]; then
+        if [[ "$arch" == "arm64" ]]; then
+            bin="$BIN_DIR/nano-airbridge"
+        else
+            bin="$BIN_DIR/nano-airbridge-darwin-amd64"
+        fi
+    elif [[ "$os" == "linux" ]]; then
+        if [[ "$arch" == "aarch64" || "$arch" == "arm64" ]]; then
+            bin="$BIN_DIR/nano-airbridge-linux-arm64"
+        else
+            bin="$BIN_DIR/nano-airbridge-linux-amd64"
+        fi
     fi
+    if [[ -n "$bin" && -x "$bin" ]]; then
+        echo "$bin"
+        return 0
+    fi
+    if [[ -x "$BIN_DIR/nano-airbridge" ]]; then
+        echo "$BIN_DIR/nano-airbridge"
+        return 0
+    fi
+    return 1
+}
+
+NATIVE_BIN="$(detect_native_binary 2>/dev/null || true)"
+
+# If binary is not compiled yet, auto-build if Go is present
+if [[ -z "$NATIVE_BIN" ]]; then
+    if command -v go &>/dev/null; then
+        echo "⚡ Building native standalone binary with Go..."
+        "$SCRIPT_DIR/build.sh"
+        NATIVE_BIN="$(detect_native_binary 2>/dev/null || true)"
+    fi
+fi
+
+if [[ -z "$NATIVE_BIN" ]]; then
+    echo "================================================================================" >&2
+    echo " ⚠️  Precompiled standalone binary not found in ./bin/" >&2
+    echo "--------------------------------------------------------------------------------" >&2
+    echo " To compile your own binary with Go (takes 2 seconds):" >&2
+    echo "   ./build.sh" >&2
+    echo "" >&2
+    echo " Or install Go from https://go.dev/dl/ (brew install go / apt install golang)" >&2
+    echo "================================================================================" >&2
+    exit 1
 fi
 
 ROOT_DIR=""
@@ -22,7 +65,7 @@ PORT="${PORT:-8899}"
 USE_TUNNEL="${USE_TUNNEL:-true}"
 MODE=""
 
-# Parse flags and arguments in any order
+# Parse flags and arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --no-tunnel)
@@ -46,7 +89,7 @@ while [[ $# -gt 0 ]]; do
             PORT="${2:-}"
             shift 2
             ;;
-        gateway|agent|local)
+        gateway|agent)
             MODE="$1"
             shift
             ;;
@@ -54,16 +97,15 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: ./start.sh [workspace_path] [options]"
             echo ""
             echo "Options:"
-            echo "  --relay <URL>     Connect to remote PHP / cloud relay (e.g. https://my-server.com/nano_relay.php)"
-            echo "  --session <ID>    Unique session key for workspace isolation (auto-generated if omitted)"
-            echo "  --token <TOKEN>   Agent authentication token (default: airbridge_agent_token_112233)"
+            echo "  --no-tunnel       Disable localtunnel (bind strictly to localhost)"
+            echo "  --relay <URL>     Connect to cloud relay URL (optional)"
+            echo "  --session <ID>    Unique session key for workspace isolation"
             echo "  --port <PORT>     Port for local HTTP gateway (default: 8899)"
-            echo "  local             Start stdio MCP server for Claude Desktop / Cursor / Windsurf"
             echo ""
             echo "Examples:"
             echo "  ./start.sh demo_workspace"
-            echo "  ./start.sh demo_workspace --relay https://nano-airbridge.gt.tc/nano_relay.php"
-            echo "  ./start.sh demo_workspace --relay --session my_project_sess"
+            echo "  ./start.sh /path/to/project --port 9000"
+            echo "  ./start.sh demo_workspace --no-tunnel"
             exit 0
             ;;
         *)
@@ -91,7 +133,102 @@ if [[ -z "$MODE" ]]; then
     fi
 fi
 
-# Detect or generate session key and public endpoint URL
+# Auto-discover npx in standard paths or version managers
+resolve_npx() {
+    if command -v npx &>/dev/null; then
+        return 0
+    fi
+    local candidates=(
+        "/opt/homebrew/bin/npx"
+        "/usr/local/bin/npx"
+        "/opt/local/bin/npx"
+        "$HOME/.local/share/fnm/current/bin/npx"
+        "$HOME/.fnm/current/bin/npx"
+        "$HOME/.volta/bin/npx"
+        "$HOME/.asdf/shims/npx"
+        "/snap/bin/npx"
+    )
+    for c in "${candidates[@]}"; do
+        if [[ -x "$c" ]]; then
+            export PATH="$(dirname "$c"):$PATH"
+            return 0
+        fi
+    done
+    if [[ -d "$HOME/.nvm/versions/node" ]]; then
+        local latest_nvm
+        latest_nvm="$(ls -1d "$HOME"/.nvm/versions/node/*/bin/npx 2>/dev/null | sort -V | tail -n 1 || true)"
+        if [[ -n "$latest_nvm" && -x "$latest_nvm" ]]; then
+            export PATH="$(dirname "$latest_nvm"):$PATH"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Display OS-specific official package manager installation instructions
+show_node_install_guide() {
+    echo "================================================================================"
+    echo " ⚠️  Node.js & npx are not installed (needed to launch free localtunnel)."
+    echo "--------------------------------------------------------------------------------"
+    echo " To enable free public tunneling for ChatGPT / Claude (zero accounts required):"
+    echo ""
+    local found_pm=false
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo " [Platform: macOS / MacBook]"
+        if command -v brew &>/dev/null; then
+            echo "   • Homebrew (Detected):     brew install node"
+            found_pm=true
+        fi
+        if command -v port &>/dev/null; then
+            echo "   • MacPorts (Detected):     sudo port install nodejs npm"
+            found_pm=true
+        fi
+        if [[ "$found_pm" == "false" ]]; then
+            echo "   • Fast No-Root Install:    curl -fsSL https://fnm.vercel.app/install | bash && fnm install --lts"
+            echo "   • Official PKG Installer:  https://nodejs.org/"
+        fi
+    else
+        echo " [Platform: Linux / Unix]"
+        if command -v apt-get &>/dev/null || command -v apt &>/dev/null; then
+            echo "   • Ubuntu / Debian (apt):   sudo apt update && sudo apt install -y nodejs npm"
+            echo "   • NodeSource (LTS Repo):   curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt install -y nodejs"
+            found_pm=true
+        fi
+        if command -v dnf &>/dev/null; then
+            echo "   • Fedora / RHEL (dnf):     sudo dnf install -y nodejs npm"
+            found_pm=true
+        elif command -v yum &>/dev/null; then
+            echo "   • CentOS / RHEL (yum):     sudo yum install -y nodejs npm"
+            found_pm=true
+        fi
+        if command -v pacman &>/dev/null; then
+            echo "   • Arch Linux (pacman):     sudo pacman -S nodejs npm"
+            found_pm=true
+        fi
+        if command -v zypper &>/dev/null; then
+            echo "   • openSUSE (zypper):       sudo zypper install nodejs npm"
+            found_pm=true
+        fi
+        if command -v apk &>/dev/null; then
+            echo "   • Alpine Linux (apk):      sudo apk add nodejs npm"
+            found_pm=true
+        fi
+        if command -v pkg &>/dev/null; then
+            echo "   • FreeBSD (pkg):           sudo pkg install node npm"
+            found_pm=true
+        fi
+        if [[ "$found_pm" == "false" ]]; then
+            echo "   • Fast No-Root Install:    curl -fsSL https://fnm.vercel.app/install | bash && fnm install --lts"
+            echo "   • Official Downloads:      https://nodejs.org/en/download"
+        fi
+    fi
+    echo ""
+    echo " Note: Once installed, simply re-run ./start.sh and localtunnel will launch automatically."
+    echo "--------------------------------------------------------------------------------"
+    echo " Continuing with local gateway on http://localhost:${PORT}/mcp"
+    echo "================================================================================"
+}
+
 NGROK_URL=""
 TUNNEL_URL=""
 TUNNEL_PID=""
@@ -105,43 +242,20 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [[ "$MODE" == "agent" ]]; then
-    if [[ -z "$RELAY_URL" ]]; then
-        RELAY_URL="https://nano-airbridge.gt.tc/nano_relay.php"
-    fi
     if [[ -z "$SESSION_KEY" ]]; then
-        SESSION_KEY="$($PYTHON_CMD -c 'import secrets; print(secrets.token_hex(8))' 2>/dev/null || echo "sess_$(date +%s)")"
+        SESSION_KEY="$(openssl rand -hex 8 2>/dev/null || LC_ALL=C tr -dc 'a-f0-9' < /dev/urandom 2>/dev/null | head -c 16 || echo "sess_$(date +%s)")"
     fi
     MCP_ENDPOINT="${RELAY_URL}?op=mcp&s=${SESSION_KEY}"
 elif [[ "$MODE" == "gateway" ]]; then
-    # 1. Check if ngrok is already running locally
     if command -v curl &>/dev/null; then
-        NGROK_URL=$(curl -s --connect-timeout 0.5 http://127.0.0.1:4040/api/tunnels 2>/dev/null | $PYTHON_CMD -c 'import sys, json; data=json.load(sys.stdin); print(data["tunnels"][0]["public_url"])' 2>/dev/null || true)
+        NGROK_URL=$(curl -s --connect-timeout 0.5 http://127.0.0.1:4040/api/tunnels 2>/dev/null | grep -o 'https://[^"]*ngrok[^"]*' 2>/dev/null | head -n 1 || true)
     fi
 
-    # 2. If ngrok is running, use it
     if [[ -n "$NGROK_URL" ]]; then
         MCP_ENDPOINT="${NGROK_URL}/mcp"
     elif [[ "$USE_TUNNEL" != "false" ]]; then
-        # 3. Check for npx to launch localtunnel
-        if ! command -v npx &>/dev/null; then
-            echo "================================================================================"
-            echo " ⚠️  Node.js & npx are not installed (needed to launch free localtunnel)."
-            echo "--------------------------------------------------------------------------------"
-            echo " To enable free public tunneling for ChatGPT / Claude without any accounts:"
-            if [[ "$OSTYPE" == "darwin"* ]]; then
-                echo "   macOS (Homebrew):   brew install node"
-            elif [[ -f /etc/debian_version ]]; then
-                echo "   Ubuntu / Debian:    sudo apt update && sudo apt install -y nodejs npm"
-            elif [[ -f /etc/fedora-release ]] || [[ -f /etc/redhat-release ]]; then
-                echo "   Fedora / RHEL:      sudo dnf install -y nodejs"
-            elif [[ -f /etc/arch-release ]]; then
-                echo "   Arch Linux:         sudo pacman -S nodejs npm"
-            else
-                echo "   Download Node.js:   https://nodejs.org/"
-            fi
-            echo "--------------------------------------------------------------------------------"
-            echo " Continuing with local gateway on http://localhost:${PORT}/mcp"
-            echo "================================================================================"
+        if ! resolve_npx; then
+            show_node_install_guide
             MCP_ENDPOINT="http://localhost:${PORT}/mcp"
         else
             echo "⚡ Launching free localtunnel (zero accounts, no sign-up)..."
@@ -172,88 +286,54 @@ elif [[ "$MODE" == "gateway" ]]; then
 fi
 
 echo "================================================================================"
-echo " nano-airbridge — Zero-Dependency MCP Runtime"
+echo " nano-airbridge — Standalone Go MCP Runtime"
+echo " Zero Python • Zero PHP • Zero Node Dependencies"
 echo "================================================================================"
-echo " Workspace:    $ROOT_DIR"
-echo " Mode:         $MODE"
-echo " OS:           macOS / Linux"
-echo " Python:       $($PYTHON_CMD --version)"
-if [[ "$MODE" == "agent" ]]; then
-echo " Relay URL:    $RELAY_URL"
-echo " Session Key:  $SESSION_KEY"
-echo " MCP Endpoint: $MCP_ENDPOINT"
-echo " Token:        ${AGENT_TOKEN:0:8}..."
-elif [[ "$MODE" == "gateway" ]]; then
+echo " Workspace:     $ROOT_DIR"
+echo " Engine:        Native Standalone Binary ($(basename "$NATIVE_BIN"))"
 if [[ -n "$TUNNEL_URL" ]]; then
 echo " Public Tunnel: $TUNNEL_URL (localtunnel)"
 elif [[ -n "$NGROK_URL" ]]; then
 echo " Public Tunnel: $NGROK_URL (ngrok)"
 fi
-echo " MCP Endpoint: $MCP_ENDPOINT"
-echo " Local Port:   $PORT"
-fi
+echo " MCP Endpoint:  $MCP_ENDPOINT"
+echo " Local Port:    $PORT"
 echo "================================================================================"
 echo ""
-if [[ "$MODE" != "local" ]]; then
 echo "📋 COPY-PASTE SYSTEM INSTRUCTION FOR CHATGPT / CLAUDE / KIMI:"
 echo "--------------------------------------------------------------------------------"
 echo "[SYSTEM INSTRUCTION: NANO-AIRBRIDGE WORKSPACE INTEGRATION]"
 echo "You are connected to the operator's local project workspace via nano-airbridge."
 echo "- Bridge Endpoint: $MCP_ENDPOINT"
-if [[ -n "$SESSION_KEY" ]]; then
-echo "- Session Key: $SESSION_KEY"
-fi
 echo "- Protocol: Model Context Protocol (MCP) JSON-RPC 2.0 with SHA-256 CAS verification."
 echo "- Concurrency Invariant: Optimistic concurrency control. Every \`read_file\` returns the file's current \`sha256\`. Every \`write_file\` and \`edit_file\` MUST supply \`expected_sha256\`. If the file was changed concurrently, the bridge aborts with \`source_changed\`."
-echo "- Idempotency: Retries with the same \`execution_id\` or \`change_id\` observe the original receipt and never replay."
 echo ""
 echo "Active Tools:"
-echo "1. \`get_capabilities\`: Inspect active grants, limits, and workspace identity."
-echo "2. \`inspect_workspace(depth=2, include_hashes=True)\`: List directories or search contents."
-echo "3. \`read_file(path, offset=0, limit=1000)\`: Read file page and retrieve SHA-256 hash."
-echo "4. \`write_file(path, content, expected_sha256)\`: Overwrite file (use expected_sha256=\"\" for new file)."
-echo "5. \`edit_file(path, old_text, new_text, expected_sha256)\`: Contiguous string replacement."
-echo "6. \`run_command(command, execution_id)\`: Execute shell command if granted."
+echo "1. \`inspect_workspace\`: List workspace files."
+echo "2. \`read_file(path)\`: Read file contents and retrieve whole-file SHA-256 checksum."
+echo "3. \`write_file(path, content, expected_sha256)\`: Create or overwrite file under CAS precondition."
+echo "4. \`edit_file(path, old_text, new_text, expected_sha256)\`: Contiguous text replacement."
+echo "5. \`run_command(command)\`: Execute shell command inside workspace root."
 echo ""
 echo "Workflow:"
-echo "1. First, inspect workspace using \`inspect_workspace\` to discover project structure autonomously."
-echo "2. Read target files with \`read_file\` to verify content and obtain the SHA-256 checksum."
-echo "3. Perform edits or create files using \`edit_file\` / \`write_file\` with verified \`expected_sha256\`."
-echo "4. Execute required test or build commands with \`run_command\` and verify execution receipt."
-echo "5. Provide an audited nano-airbridge execution receipt in your final response."
+echo "1. Inspect workspace to discover files: inspect_workspace."
+echo "2. Read target file to get content and SHA-256 hash: read_file(path)."
+echo "3. Update files with verified hash: write_file / edit_file."
+echo "4. Execute required test or build commands: run_command."
 echo "--------------------------------------------------------------------------------"
 echo ""
-fi
 
-case "$MODE" in
-    gateway)
-        echo "Starting HTTP/MCP Gateway on port $PORT..."
-        "$PYTHON_CMD" "$SCRIPT_DIR/nano_http_server.py" \
-            --root "$ROOT_DIR" \
-            --port "$PORT" \
-            --enable-writes \
-            --enable-execution
-        ;;
-    agent)
-        echo "Connecting to Cloud Relay via outbound long-poll:"
-        echo " Relay:   $RELAY_URL"
-        echo " Session: $SESSION_KEY"
-        echo " No open ports or ngrok needed."
-        exec "$PYTHON_CMD" "$SCRIPT_DIR/relay/nano_agent.py" \
-            --relay "$RELAY_URL" \
-            --session "$SESSION_KEY" \
-            --token "$AGENT_TOKEN" \
-            --command "$PYTHON_CMD $SCRIPT_DIR/nano_airbridge.py --root $ROOT_DIR --enable-writes --enable-execution"
-        ;;
-    local)
-        echo "Starting stdio MCP server for Claude Desktop / Cursor / Windsurf..."
-        exec "$PYTHON_CMD" "$SCRIPT_DIR/nano_airbridge.py" \
-            --root "$ROOT_DIR" \
-            --enable-writes \
-            --enable-execution
-        ;;
-    *)
-        echo "Usage: ./start.sh [path_to_workspace] [--relay <URL>]"
-        exit 1
-        ;;
-esac
+if [[ "$MODE" == "agent" ]]; then
+    exec "$NATIVE_BIN" \
+        -root "$ROOT_DIR" \
+        -relay "$RELAY_URL" \
+        -token "$AGENT_TOKEN" \
+        -enable-writes \
+        -enable-execution
+else
+    exec "$NATIVE_BIN" \
+        -root "$ROOT_DIR" \
+        -port "$PORT" \
+        -enable-writes \
+        -enable-execution
+fi

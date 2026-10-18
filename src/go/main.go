@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 var (
 	secretNames = map[string]bool{
@@ -57,32 +57,21 @@ func isPathAllowed(root, relPath string) (string, error) {
 	return cleanFull, nil
 }
 
-func handleReadFile(root, relPath string) (map[string]interface{}, error) {
-	full, err := isPathAllowed(root, relPath)
-	if err != nil {
-		return nil, err
-	}
-	info, err := os.Lstat(full)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return map[string]interface{}{"path": relPath, "exists": false}, nil
-		}
-		return nil, err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("symlinks denied")
-	}
-	data, err := os.ReadFile(full)
-	if err != nil {
-		return nil, err
-	}
+func handleGetCapabilities(cfg Config) (map[string]interface{}, error) {
 	return map[string]interface{}{
-		"path":     relPath,
-		"exists":   true,
-		"size":     len(data),
-		"sha256":   computeSHA256(data),
-		"mtime_ns": info.ModTime().UnixNano(),
-		"content":  string(data),
+		"server": map[string]string{
+			"name":    "nano-airbridge",
+			"version": version,
+		},
+		"grants": map[string]bool{
+			"writes":    cfg.EnableWrites,
+			"execution": cfg.EnableExecution,
+		},
+		"limits": map[string]int{
+			"max_file_size": 10 * 1024 * 1024,
+			"page_size":     32 * 1024,
+		},
+		"workspace_root": cfg.Root,
 	}, nil
 }
 
@@ -122,14 +111,132 @@ func handleInspectWorkspace(root string) (map[string]interface{}, error) {
 	}, nil
 }
 
-func handleRunCommand(root string, argv []string, enableExec bool) (map[string]interface{}, error) {
+func handleReadFile(root, relPath string) (map[string]interface{}, error) {
+	full, err := isPathAllowed(root, relPath)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(full)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]interface{}{"path": relPath, "exists": false}, nil
+		}
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("symlinks denied")
+	}
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"path":     relPath,
+		"exists":   true,
+		"size":     len(data),
+		"sha256":   computeSHA256(data),
+		"mtime_ns": info.ModTime().UnixNano(),
+		"content":  string(data),
+	}, nil
+}
+
+func handleWriteFile(root, relPath, content, expectedSHA256 string, enableWrites bool) (map[string]interface{}, error) {
+	if !enableWrites {
+		return nil, fmt.Errorf("write access denied; start with --enable-writes")
+	}
+	full, err := isPathAllowed(root, relPath)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(full)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("symlinks denied")
+		}
+		data, err := os.ReadFile(full)
+		if err != nil {
+			return nil, err
+		}
+		currentSHA := computeSHA256(data)
+		if expectedSHA256 != "" && currentSHA != expectedSHA256 {
+			return nil, fmt.Errorf("source_changed: expected %s, found %s", expectedSHA256, currentSHA)
+		}
+	} else if os.IsNotExist(err) {
+		if expectedSHA256 != "" {
+			return nil, fmt.Errorf("source_changed: file does not exist, expected empty precondition")
+		}
+	} else {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		return nil, err
+	}
+	newData := []byte(content)
+	if err := os.WriteFile(full, newData, 0644); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"path":       relPath,
+		"written":    true,
+		"size_bytes": len(newData),
+		"sha256":     computeSHA256(newData),
+	}, nil
+}
+
+func handleEditFile(root, relPath, oldText, newText, expectedSHA256 string, enableWrites bool) (map[string]interface{}, error) {
+	if !enableWrites {
+		return nil, fmt.Errorf("write access denied; start with --enable-writes")
+	}
+	full, err := isPathAllowed(root, relPath)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return nil, err
+	}
+	currentSHA := computeSHA256(data)
+	if expectedSHA256 != "" && currentSHA != expectedSHA256 {
+		return nil, fmt.Errorf("source_changed: expected %s, found %s", expectedSHA256, currentSHA)
+	}
+	content := string(data)
+	count := strings.Count(content, oldText)
+	if count == 0 {
+		return nil, fmt.Errorf("target_not_found: old_text not found in %s", relPath)
+	}
+	if count > 1 {
+		return nil, fmt.Errorf("multiple_occurrences: old_text appears %d times, must be unique", count)
+	}
+	updatedContent := strings.Replace(content, oldText, newText, 1)
+	newData := []byte(updatedContent)
+	if err := os.WriteFile(full, newData, 0644); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"path":       relPath,
+		"edited":     true,
+		"size_bytes": len(newData),
+		"sha256":     computeSHA256(newData),
+	}, nil
+}
+
+func handleRunCommand(root string, argv []string, cmdStr string, enableExec bool) (map[string]interface{}, error) {
 	if !enableExec {
 		return nil, fmt.Errorf("command execution disabled; start with --enable-execution")
 	}
-	if len(argv) == 0 {
+	var cmd *exec.Cmd
+	if len(argv) > 0 {
+		cmd = exec.Command(argv[0], argv[1:]...)
+	} else if cmdStr != "" {
+		if os.Getenv("OS") == "Windows_NT" {
+			cmd = exec.Command("cmd", "/c", cmdStr)
+		} else {
+			cmd = exec.Command("sh", "-c", cmdStr)
+		}
+	} else {
 		return nil, fmt.Errorf("empty command")
 	}
-	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
 	exitCode := 0
@@ -150,6 +257,51 @@ func handleRunCommand(root string, argv []string, enableExec bool) (map[string]i
 			"text": string(out),
 		},
 	}, nil
+}
+
+func executeTool(cfg Config, toolName string, args map[string]interface{}) (interface{}, error) {
+	switch toolName {
+	case "get_capabilities":
+		return handleGetCapabilities(cfg)
+	case "inspect_workspace":
+		return handleInspectWorkspace(cfg.Root)
+	case "read_file":
+		p, _ := args["path"].(string)
+		return handleReadFile(cfg.Root, p)
+	case "write_file":
+		p, _ := args["path"].(string)
+		c, _ := args["content"].(string)
+		sha, _ := args["expected_sha256"].(string)
+		return handleWriteFile(cfg.Root, p, c, sha, cfg.EnableWrites)
+	case "edit_file":
+		p, _ := args["path"].(string)
+		oldT, _ := args["old_text"].(string)
+		newT, _ := args["new_text"].(string)
+		sha, _ := args["expected_sha256"].(string)
+		return handleEditFile(cfg.Root, p, oldT, newT, sha, cfg.EnableWrites)
+	case "run_command":
+		var argv []string
+		if rawArgv, ok := args["argv"].([]interface{}); ok {
+			for _, a := range rawArgv {
+				if s, ok := a.(string); ok {
+					argv = append(argv, s)
+				}
+			}
+		}
+		cmdStr, _ := args["command"].(string)
+		return handleRunCommand(cfg.Root, argv, cmdStr, cfg.EnableExecution)
+	default:
+		return nil, fmt.Errorf("unknown tool: %s", toolName)
+	}
+}
+
+var toolCatalog = []map[string]string{
+	{"name": "get_capabilities", "description": "Inspect active grants, limits, and workspace identity"},
+	{"name": "inspect_workspace", "description": "List directory contents or search text"},
+	{"name": "read_file", "description": "Read file with SHA-256 CAS verification"},
+	{"name": "write_file", "description": "Write or overwrite file with expected_sha256 precondition"},
+	{"name": "edit_file", "description": "Edit contiguous text with expected_sha256 CAS precondition"},
+	{"name": "run_command", "description": "Execute shell command inside root with execution receipt"},
 }
 
 func startHTTPServer(cfg Config) {
@@ -211,11 +363,7 @@ func startHTTPServer(cfg Config) {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"jsonrpc": "2.0", "id": msgID,
 				"result": map[string]interface{}{
-					"tools": []map[string]string{
-						{"name": "inspect_workspace", "description": "List directory contents or search text"},
-						{"name": "read_file", "description": "Read file with SHA-256 CAS verification"},
-						{"name": "run_command", "description": "Execute shell command inside root"},
-					},
+					"tools": toolCatalog,
 				},
 			})
 		case "tools/call":
@@ -223,29 +371,7 @@ func startHTTPServer(cfg Config) {
 			toolName, _ := params["name"].(string)
 			args, _ := params["arguments"].(map[string]interface{})
 
-			var (
-				res interface{}
-				err error
-			)
-			switch toolName {
-			case "read_file":
-				p, _ := args["path"].(string)
-				res, err = handleReadFile(cfg.Root, p)
-			case "inspect_workspace":
-				res, err = handleInspectWorkspace(cfg.Root)
-			case "run_command":
-				var argv []string
-				if rawArgv, ok := args["argv"].([]interface{}); ok {
-					for _, a := range rawArgv {
-						if s, ok := a.(string); ok {
-							argv = append(argv, s)
-						}
-					}
-				}
-				res, err = handleRunCommand(cfg.Root, argv, cfg.EnableExecution)
-			default:
-				err = fmt.Errorf("unknown tool: %s", toolName)
-			}
+			res, err := executeTool(cfg, toolName, args)
 			if err != nil {
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"jsonrpc": "2.0", "id": msgID,
@@ -259,6 +385,24 @@ func startHTTPServer(cfg Config) {
 				"result": map[string]interface{}{
 					"content": []map[string]string{{"type": "text", "text": string(outBytes)}},
 				},
+			})
+		default:
+			// Direct RPC method dispatch (e.g. method: "read_file", params: {...})
+			var args map[string]interface{}
+			if p, ok := msg["params"].(map[string]interface{}); ok {
+				args = p
+			}
+			res, err := executeTool(cfg, method, args)
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0", "id": msgID,
+					"error": map[string]interface{}{"code": -32601, "message": err.Error()},
+				})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0", "id": msgID,
+				"result": res,
 			})
 		}
 	})
@@ -285,13 +429,8 @@ func startRelayAgent(cfg Config) {
 	fmt.Printf("[nano-airbridge] Relay: %s\n", relayBase)
 	fmt.Printf("[nano-airbridge] Workspace: %s (writes=%v, exec=%v)\n", cfg.Root, cfg.EnableWrites, cfg.EnableExecution)
 
-	// 1. Register tools
 	regPayload := map[string]interface{}{
-		"tools": []map[string]string{
-			{"name": "inspect_workspace", "description": "List directory contents or search text"},
-			{"name": "read_file", "description": "Read file with SHA-256 CAS verification"},
-			{"name": "run_command", "description": "Execute shell command inside root"},
-		},
+		"tools":  toolCatalog,
 		"server": map[string]string{"name": "nano-airbridge-go", "version": version},
 	}
 	regBytes, _ := json.Marshal(regPayload)
@@ -308,7 +447,6 @@ func startRelayAgent(cfg Config) {
 		fmt.Printf("[nano-airbridge] Registered with cloud relay successfully.\n")
 	}
 
-	// 2. Outbound long-polling loop
 	for {
 		pollReq, _ := http.NewRequest("GET", fmt.Sprintf("%s?op=poll&wait=20&t=%s", relayBase, token), nil)
 		pollReq.Header.Set("X-Agent-Token", token)
@@ -336,30 +474,7 @@ func startRelayAgent(cfg Config) {
 				toolName, _ := params["name"].(string)
 				args, _ := params["arguments"].(map[string]interface{})
 
-				var (
-					res interface{}
-					err error
-				)
-				switch toolName {
-				case "read_file":
-					p, _ := args["path"].(string)
-					res, err = handleReadFile(cfg.Root, p)
-				case "inspect_workspace":
-					res, err = handleInspectWorkspace(cfg.Root)
-				case "run_command":
-					var argv []string
-					if rawArgv, ok := args["argv"].([]interface{}); ok {
-						for _, a := range rawArgv {
-							if s, ok := a.(string); ok {
-								argv = append(argv, s)
-							}
-						}
-					}
-					res, err = handleRunCommand(cfg.Root, argv, cfg.EnableExecution)
-				default:
-					err = fmt.Errorf("unknown tool: %s", toolName)
-				}
-
+				res, err := executeTool(cfg, toolName, args)
 				if err != nil {
 					reply = map[string]interface{}{
 						"jsonrpc": "2.0",
