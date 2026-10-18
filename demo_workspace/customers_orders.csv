@@ -1,0 +1,26 @@
+order_id,date,customer,country,category,product,quantity,unit_price,total_amount,status
+ORD-1001,2026-10-01,Alex Rivera,United States,Hardware,Mechanical Keyboard,2,129.99,259.98,Delivered
+ORD-1002,2026-10-01,Elena Rostova,Germany,Electronics,Noise-Cancelling Headphones,1,249.50,249.50,Delivered
+ORD-1003,2026-10-02,Kenji Sato,Japan,Accessories,USB-C Docking Station,3,89.00,267.00,Delivered
+ORD-1004,2026-10-02,Sarah Chen,Canada,Hardware,UltraWide Monitor 34",1,499.00,499.00,Delivered
+ORD-1005,2026-10-03,Liam O'Connor,Ireland,Software,DevOps Tooling License,5,45.00,225.00,Delivered
+ORD-1006,2026-10-03,Priya Sharma,India,Electronics,Wireless Ergonomic Mouse,4,59.99,239.96,Delivered
+ORD-1007,2026-10-04,Marcus Vance,United Kingdom,Accessories,Thunderbolt 4 Cable 2m,6,29.95,179.70,Cancelled
+ORD-1008,2026-10-04,Amira Benali,France,Hardware,NVMe M.2 SSD 2TB,2,159.00,318.00,Delivered
+ORD-1009,2026-10-05,David Kim,South Korea,Electronics,Studio Microphone,1,189.00,189.00,Delivered
+ORD-1010,2026-10-05,Carlos Gomez,Spain,Software,Cloud Storage 1TB Annual,2,99.00,198.00,Refunded
+ORD-1011,2026-10-06,Sofia Lindqvist,Sweden,Hardware,Mechanical Keyboard,1,129.99,129.99,Delivered
+ORD-1012,2026-10-06,Wei Zhang,Singapore,Accessories,USB-C Docking Station,2,89.00,178.00,Delivered
+ORD-1013,2026-10-07,Mateo Rossi,Italy,Electronics,Noise-Cancelling Headphones,2,249.50,499.00,Pending
+ORD-1014,2026-10-07,Chloe Martin,Australia,Hardware,UltraWide Monitor 34",2,499.00,998.00,Delivered
+ORD-1015,2026-10-08,Lucas Silva,Brazil,Accessories,Aluminum Laptop Stand,3,49.99,149.97,Delivered
+ORD-1016,2026-10-08,Hannah Schmidt,Germany,Hardware,NVMe M.2 SSD 2TB,3,159.00,477.00,Delivered
+ORD-1017,2026-10-09,Tariq Mansour,UAE,Electronics,Studio Microphone,2,189.00,378.00,Delivered
+ORD-1018,2026-10-09,Jessica Taylor,United States,Accessories,Thunderbolt 4 Cable 2m,4,29.95,119.80,Delivered
+ORD-1019,2026-10-10,Lars Nielsen,Denmark,Software,DevOps Tooling License,10,45.00,450.00,Delivered
+ORD-1020,2026-10-10,Yuki Tanaka,Japan,Hardware,Mechanical Keyboard,3,129.99,389.97,Delivered
+ORD-1021,2026-10-11,Emma Watson,United Kingdom,Electronics,Wireless Ergonomic Mouse,2,59.99,119.98,Delivered
+ORD-1022,2026-10-11,Vikram Patel,India,Accessories,USB-C Docking Station,1,89.00,89.00,Cancelled
+ORD-1023,2026-10-12,Camille Dubois,France,Hardware,UltraWide Monitor 34",1,499.00,499.00,Delivered
+ORD-1024,2026-10-12,Oliver Brown,Canada,Software,Cloud Storage 1TB Annual,3,99.00,297.00,Delivered
+ORD-1025,2026-10-13,Ananya Roy,India,Hardware,NVMe M.2 SSD 2TB,1,159.00,159.00,Delivered

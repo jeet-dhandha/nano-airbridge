@@ -38,20 +38,42 @@ python3 nano_airbridge.py --root /path/to/project
 python3 nano_airbridge.py --root /path/to/project --enable-writes --enable-execution
 ```
 
-### 2. Connect Remote ChatGPT (Via Free Relay)
+### 2. Connect Remote Chats (ChatGPT, Kimi, Claude, Qwen)
+
+#### Option A: Instant Local Gateway (ngrok)
 ```bash
-# 1. Deploy relay/nano_relay.php on your free PHP host
-# 2. Start outbound long-polling agent on your PC:
-python3 relay/nano_agent.py \
-  --relay https://your-host.example/nano_relay.php \
-  --token YOUR_AGENT_TOKEN \
-  --command "python3 nano_airbridge.py --root /path/to/project --enable-writes --enable-execution"
-# 3. Add Custom Connector in ChatGPT:
-#    URL: https://your-host.example/nano_relay.php?op=mcp&s=YOUR_CLIENT_SECRET
+# Start zero-dependency local HTTP gateway
+python3 nano_http_server.py --root /path/to/project --port 8899 --enable-writes --enable-execution
+# Expose publicly
+ngrok http 8899
+# Endpoint: https://<subdomain>.ngrok-free.dev/mcp
 ```
 
-### 3. Verification & Safety Audit
+#### Option B: 100% Free Remote PHP Relay (InfinityFree / Cloudflare / cPanel)
+* Reference instance: `https://nano-airbridge.gt.tc/nano_relay.php`
+* Run local long-polling client:
+```bash
+python3 relay/nano_agent.py \
+  --relay https://nano-airbridge.gt.tc/nano_relay.php \
+  --token YOUR_AGENT_TOKEN \
+  --command "python3 nano_airbridge.py --root /path/to/project --enable-writes --enable-execution"
+```
+* Custom connector endpoint: `https://nano-airbridge.gt.tc/nano_relay.php?op=mcp&s=YOUR_CLIENT_SECRET`
+
+### 3. Universal SYSTEM Prompt for AI Chat Prompts
+Paste this system instruction into your prompt for agentic platforms:
+```markdown
+[SYSTEM INSTRUCTION: NANO-AIRBRIDGE WORKSPACE INTEGRATION]
+You are connected to the operator's local project workspace via nano-airbridge.
+- Bridge Endpoint: <YOUR_BRIDGE_URL>/mcp
+- Protocol: Model Context Protocol (MCP) JSON-RPC 2.0 with SHA-256 CAS verification.
+- Concurrency: Every `read_file` returns the file's current `sha256`. Every `write_file` and `edit_file` MUST supply `expected_sha256`.
+- Idempotency: Retries with the same `execution_id` or `change_id` observe the original receipt and never replay.
+```
+
+### 4. Verification & Safety Audit
 ```bash
 python3 smoke_test.py    # 33/33 protocol & concurrency tests
 python3 audit.py         # Static zero-network verification
 ```
+

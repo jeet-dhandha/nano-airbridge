@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""nano_http_server.py — Zero-dependency HTTP gateway for nano-airbridge.
+
+Exposes nano_airbridge.py stdio MCP protocol over standard HTTP POST JSON-RPC.
+Works out of the box with ngrok, Cloudflare tunnels, or direct LAN connections.
+
+Usage:
+    python3 nano_http_server.py --root /path/to/project --port 8765 [--enable-writes] [--enable-execution]
+"""
+
+from __future__ import annotations
+
+import argparse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+from pathlib import Path
+import subprocess
+import sys
+import threading
+
+SERVER_PATH = Path(__file__).resolve().parent / "nano_airbridge.py"
+
+
+class BridgeHandler(BaseHTTPRequestHandler):
+    proc: subprocess.Popen
+    lock: threading.Lock
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+
+    def do_GET(self):
+        if self.path.startswith("/healthz"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok","server":"nano-airbridge-http"}\n')
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"nano-airbridge HTTP gateway is running. Send POST JSON-RPC to /mcp\n")
+
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8", errors="replace")
+        try:
+            msg = json.loads(body)
+        except Exception as e:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"jsonrpc": "2.0", "error": {"code": -32700, "message": str(e)}}).encode())
+            return
+
+        method = msg.get("method")
+        msg_id = msg.get("id")
+
+        # Handle notifications (no response needed)
+        if method and method.startswith("notifications/"):
+            self.send_response(202)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            return
+
+        with self.lock:
+            try:
+                self.proc.stdin.write(json.dumps(msg) + "\n")
+                self.proc.stdin.flush()
+                reply_line = self.proc.stdout.readline()
+                if not reply_line:
+                    raise RuntimeError("nano_airbridge process returned empty response")
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32603, "message": str(e)}}).encode())
+                return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(reply_line.encode("utf-8"))
+
+    def log_message(self, format, *args):
+        # Keep logs concise
+        print(f"[nano-http] {args[0]} - {args[1]}", file=sys.stderr)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Zero-dependency HTTP gateway for nano-airbridge")
+    parser.add_argument("--root", type=str, required=True, help="Absolute path to workspace root")
+    parser.add_argument("--port", type=int, default=8765, help="HTTP port to listen on (default 8765)")
+    parser.add_argument("--enable-writes", action="store_true", help="Grant workspace writes")
+    parser.add_argument("--enable-execution", action="store_true", help="Grant command execution")
+    args = parser.parse_args()
+
+    sub_args = [sys.executable, str(SERVER_PATH), "--root", args.root]
+    if args.enable_writes:
+        sub_args.append("--enable-writes")
+    if args.enable_execution:
+        sub_args.append("--enable-execution")
+
+    proc = subprocess.Popen(
+        sub_args,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=sys.stderr,
+        text=True,
+        bufsize=1
+    )
+
+    lock = threading.Lock()
+    BridgeHandler.proc = proc
+    BridgeHandler.lock = lock
+
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), BridgeHandler)
+    print(f"nano-airbridge HTTP gateway listening on http://127.0.0.1:{args.port}/mcp")
+    print(f"Workspace root: {args.root}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    finally:
+        server.server_close()
+        proc.terminate()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -104,22 +104,102 @@ Add to `claude_desktop_config.json` (Settings → Developer → Edit Config):
 
 ---
 
-### 3. Remote Web Chats (ChatGPT Custom Connectors)
-ChatGPT web cannot run local processes directly. Instead of paying for ngrok or running binary daemons, use the **free relay**:
+### 3. Remote Web Chats & Agentic Platforms (ChatGPT, Kimi, Claude, GLM, Qwen)
 
-1. **Deploy relay** (once): Upload `relay/nano_relay.php` to any free PHP host (InfinityFree, AwardSpace, or your own server).
-2. **Start agent** (on your local machine):
+Remote web AI chats cannot execute commands on your local machine directly. `nano-airbridge` provides **two battle-tested pathways** to connect them:
+
+```text
+[Option A: Instant Developer Gateway]
+ChatGPT / Kimi / Claude ──HTTPS──> ngrok ──HTTP:8899──> nano_http_server.py ──stdio──> nano_airbridge.py
+
+[Option B: 100% Free Permanent Cloud Relay]
+ChatGPT Custom Connector ──HTTPS──> nano_relay.php (InfinityFree / cPanel)
+                                          ▲
+                                   HTTPS (outbound long-poll)
+                                          │
+                                    nano_agent.py ──stdio──> nano_airbridge.py
+```
+
+---
+
+#### Option A: Instant Developer Gateway (ngrok + `nano_http_server.py`)
+*Best for: 30-second local testing, developers with an ngrok/Cloudflare account.*
+
+1. **Start the local HTTP JSON-RPC gateway** (zero external dependencies):
+   ```bash
+   python3 nano_http_server.py --root /path/to/project --port 8899 --enable-writes --enable-execution
+   ```
+2. **Expose the port publicly**:
+   ```bash
+   ngrok http 8899
+   ```
+3. **Your public MCP endpoint**: `https://<your-subdomain>.ngrok-free.dev/mcp`
+   Verify live health:
+   ```bash
+   curl -H "ngrok-skip-browser-warning: 1" https://<your-subdomain>.ngrok-free.dev/healthz
+   # => {"status":"ok","server":"nano-airbridge-http"}
+   ```
+
+---
+
+#### Option B: 100% Free Remote Cloud Relay (`nano_relay.php` on InfinityFree)
+*Best for: Zero ongoing cost, zero binaries, works behind strict corporate firewalls and NAT without port forwarding.*
+
+1. **Deploy `relay/nano_relay.php`**:
+   Upload `relay/nano_relay.php` to the `/htdocs` folder of any free PHP hosting provider (e.g. [InfinityFree](https://infinityfree.com), AwardSpace, or your own shared cPanel).
+   * **Live Reference Deployment**: [`https://nano-airbridge.gt.tc/nano_relay.php`](https://nano-airbridge.gt.tc/nano_relay.php)
+
+   > [!TIP]
+   > **Automate with AI Assistants (Antigravity, Copilot, OpenCode, freebuff)**:
+   > If you do not want to upload files manually via cPanel/FTP, you can ask any agentic coding assistant to automate it for you:
+   > *"Deploy `relay/nano_relay.php` into the `/htdocs` directory of my InfinityFree account using browser automation or FTP credentials."*
+
+2. **Start the outbound-only agent** on your local machine:
    ```bash
    python3 relay/nano_agent.py \
-     --relay https://your-host.example/nano_relay.php \
+     --relay https://nano-airbridge.gt.tc/nano_relay.php \
      --token YOUR_AGENT_TOKEN \
      --command "python3 nano_airbridge.py --root /path/to/project --enable-writes --enable-execution"
    ```
-3. **Connect ChatGPT**:
-   * ChatGPT → **Settings → Connectors → Create custom connector**
-   * URL: `https://your-host.example/nano_relay.php?op=mcp&s=YOUR_CLIENT_SECRET`
+   *No incoming ports are opened. The agent communicates strictly via outbound HTTPS long-polling.*
 
-The agent connects outbound only (works behind NAT and corporate firewalls).
+3. **Connect ChatGPT Custom Connector**:
+   * In ChatGPT → **Settings → Connectors → Create custom connector**
+   * Endpoint URL: `https://nano-airbridge.gt.tc/nano_relay.php?op=mcp&s=YOUR_CLIENT_SECRET`
+
+---
+
+#### The Universal SYSTEM Prompt for Agentic Chat Platforms
+For platforms supporting Custom Instructions, System Prompts, or direct tool/fetch calling (ChatGPT, Kimi, Claude, GLM, Qwen, DeepSeek), copy and paste this system prompt at the top or bottom of your prompt:
+
+```markdown
+[SYSTEM INSTRUCTION: NANO-AIRBRIDGE WORKSPACE INTEGRATION]
+You are connected to the operator's local project workspace via nano-airbridge.
+- Bridge Endpoint: <YOUR_BRIDGE_URL>/mcp
+- Protocol: Model Context Protocol (MCP) JSON-RPC 2.0 with SHA-256 CAS verification.
+- Concurrency Invariant: Optimistic concurrency control. Every `read_file` returns the file's current `sha256`. Every `write_file` and `edit_file` MUST supply `expected_sha256`. If the file was changed concurrently, the bridge aborts with `source_changed`.
+- Idempotency: Retries with the same `execution_id` or `change_id` observe the original receipt and never replay.
+
+Active Tools:
+1. `get_capabilities`: Inspect active grants, limits, and workspace identity.
+2. `inspect_workspace(depth=2, include_hashes=True)`: List directories or search contents.
+3. `read_file(path, offset=0, limit=1000)`: Read file page and retrieve SHA-256 hash.
+4. `write_file(path, content, expected_sha256)`: Overwrite file (use expected_sha256="" for new file).
+5. `edit_file(path, old_text, new_text, expected_sha256)`: Contiguous string replacement.
+6. `run_command(command, execution_id)`: Execute shell command if granted.
+
+Workflow:
+1. Always inspect or read the target file first to obtain its SHA-256 checksum.
+2. Perform edits using `edit_file` with the exact verified `expected_sha256`.
+3. Provide an audited nano-airbridge execution receipt in your final response.
+```
+
+---
+
+## Video Demo (ChatGPT Filtering Local Dataset)
+
+See [`chatgpt_data_filter_demo.mp4`](chatgpt_data_filter_demo.mp4) for an end-to-end recorded walkthrough of ChatGPT using `nano-airbridge` to filter `customers_orders.csv` in a local workspace, computing category revenue metrics and generating a cryptographic execution receipt with zero UI leakage.
+
 
 ---
 
