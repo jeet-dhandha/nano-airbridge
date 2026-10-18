@@ -10,3 +10,7 @@ relay/relay_config.php
 # local state dirs if created in-tree
 .nano-airbridge/
 .om-local/
+
+# compiled binaries
+bin/
+*.exe

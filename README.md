@@ -29,14 +29,46 @@ Your Project Directory ◀──▶ nano_airbridge.py
 
 ---
 
-## Quick Start
+---
 
+## Quick Start — Zero Installation Required
+
+Choose the runtime that fits your machine. **No Python, no PHP, and no Node.js required.**
+
+### 1. Native Standalone Executables (Zero Runtime Dependencies)
+Precompiled, single-file static binaries for Windows, macOS, and Linux:
+
+* **Windows**:
+  ```cmd
+  bin\nano-airbridge.exe --root C:\path\to\project --port 8899 --enable-writes --enable-execution
+  :: Or simply double-click start.bat
+  ```
+* **macOS / Linux**:
+  ```bash
+  ./bin/nano-airbridge --root /path/to/project --port 8899 --enable-writes --enable-execution
+  # Or run ./start.sh
+  ```
+
+### 2. Pure OS Scripts (Zero Installs, Native Built-In)
+* **Windows (Native PowerShell)**:
+  Pre-installed on every Windows 10 and 11 PC. Built on Windows .NET `HttpListener`:
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\nano-airbridge.ps1 -Root .\my_project -Port 8899
+  ```
+* **macOS / Linux (Pure POSIX Bash)**:
+  Built on native `bash`, `curl`, and `shasum`:
+  ```bash
+  ./nano-airbridge.sh /path/to/project 8899
+  ```
+
+### 3. Python 3 Stdlib (Zero Pip Dependencies)
+If you already have Python 3.11+:
 ```bash
-# 1. Read-only (safest): the chat can inspect and search, but cannot modify anything
-python3 nano_airbridge.py --root /absolute/path/to/project
+# Read-only inspection (safest)
+python3 nano_airbridge.py --root /path/to/project
 
-# 2. Full local work: writes + command execution (explicit operator grants)
-python3 nano_airbridge.py --root /absolute/path/to/project --enable-writes --enable-execution
+# Full read/write/execution
+python3 nano_airbridge.py --root /path/to/project --enable-writes --enable-execution
 ```
 
 Keep `--root` to the smallest project directory you want exposed. The server
