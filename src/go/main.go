@@ -339,41 +339,76 @@ var toolCatalog = []map[string]string{
 }
 
 func startHTTPServer(cfg Config) {
+	getBaseURL := func(r *http.Request) string {
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		host := r.Host
+		if h := r.Header.Get("X-Forwarded-Host"); h != "" {
+			host = h
+		}
+		return fmt.Sprintf("%s://%s", scheme, host)
+	}
+
 	helpHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+		baseURL := getBaseURL(r)
+
 		helpDoc := map[string]interface{}{
 			"server": map[string]string{
 				"name":        "nano-airbridge",
 				"version":     version,
 				"description": "Model Context Protocol & HTTP REST Workspace Bridge for AI Agents",
+				"base_url":    baseURL,
 			},
-			"paths": map[string]map[string]string{
-				"/help": {
-					"method":      "GET",
-					"description": "API & Path discovery directory (this page). Lists all accessible paths and tools.",
+			"instructions_for_ai": map[string]string{
+				"step_1_inspect_workspace": fmt.Sprintf("Perform HTTP GET to %s/inspect or run: curl -sS -H 'bypass-tunnel-reminder: 1' -H 'ngrok-skip-browser-warning: 1' '%s/inspect'", baseURL, baseURL),
+				"step_2_read_file":         fmt.Sprintf("Perform HTTP GET to %s/read/<path> or run: curl -sS -H 'bypass-tunnel-reminder: 1' -H 'ngrok-skip-browser-warning: 1' '%s/read/customers_orders.csv'", baseURL, baseURL),
+				"step_3_run_command":       fmt.Sprintf("Perform HTTP POST to %s/run or run: curl -sS -X POST '%s/run' -H 'Content-Type: application/json' -H 'bypass-tunnel-reminder: 1' -H 'ngrok-skip-browser-warning: 1' -d '{\"command\": \"which python3 node bash\"}'. Note: 'rm' commands are strictly prohibited.", baseURL, baseURL),
+			},
+			"tunnel_headers": map[string]string{
+				"localtunnel": "bypass-tunnel-reminder: 1",
+				"ngrok":       "ngrok-skip-browser-warning: 1",
+			},
+			"endpoints": map[string]map[string]interface{}{
+				"inspect": {
+					"method":       "GET",
+					"url":          fmt.Sprintf("%s/inspect", baseURL),
+					"description":  "Inspect all workspace files, relative paths, and sizes in bytes.",
+					"example_curl": fmt.Sprintf("curl -sS -H 'bypass-tunnel-reminder: 1' -H 'ngrok-skip-browser-warning: 1' '%s/inspect'", baseURL),
 				},
-				"/healthz": {
-					"method":      "GET",
-					"description": "Liveness and health check endpoint.",
+				"read_file": {
+					"method":       "GET",
+					"url_pattern":  fmt.Sprintf("%s/read/{path}", baseURL),
+					"example":      fmt.Sprintf("%s/read/customers_orders.csv", baseURL),
+					"description":  "Read file contents and obtain whole-file SHA-256 CAS digest.",
+					"example_curl": fmt.Sprintf("curl -sS -H 'bypass-tunnel-reminder: 1' -H 'ngrok-skip-browser-warning: 1' '%s/read/customers_orders.csv'", baseURL),
 				},
-				"/inspect": {
-					"method":      "GET",
-					"description": "Inspect workspace files, sizes, and relative paths.",
-				},
-				"/read/{path}": {
-					"method":      "GET",
-					"description": "Read contents of any workspace file and retrieve whole-file SHA-256 CAS checksum.",
-					"example":     "/read/customers_orders.csv",
-				},
-				"/run": {
+				"run_command": {
 					"method":      "POST",
-					"description": "Execute shell command directly on the host computer inside workspace root. Body: {\"command\": \"...\"}. Unlimited length via HTTP POST. Safety: 'rm' commands are strictly prohibited. Write and compute commands are permitted.",
-					"example":     "POST /run with JSON {\"command\": \"which python3 node bash go\"}",
+					"url":         fmt.Sprintf("%s/run", baseURL),
+					"description": "Execute shell command on the host computer inside workspace root. 'rm' commands are strictly forbidden. Only write and compute commands are permitted.",
+					"headers": map[string]string{
+						"Content-Type":            "application/json",
+						"bypass-tunnel-reminder":  "1",
+						"ngrok-skip-browser-warning": "1",
+					},
+					"body_schema":  map[string]string{"command": "Shell command string (e.g. 'which python3 node bash', 'python3 -c \"...\"')"},
+					"example_curl": fmt.Sprintf("curl -sS -X POST '%s/run' -H 'Content-Type: application/json' -H 'bypass-tunnel-reminder: 1' -H 'ngrok-skip-browser-warning: 1' -d '{\"command\": \"which python3 node bash\"}'", baseURL),
 				},
-				"/mcp": {
-					"method":      "POST",
-					"description": "MCP JSON-RPC 2.0 gateway for tools/list, tools/call, and stateful operations.",
+				"help": {
+					"method":       "GET",
+					"url":          fmt.Sprintf("%s/help", baseURL),
+					"description":  "Self-documenting path discovery directory.",
+					"example_curl": fmt.Sprintf("curl -sS -H 'bypass-tunnel-reminder: 1' -H 'ngrok-skip-browser-warning: 1' '%s/help'", baseURL),
+				},
+				"healthz": {
+					"method":       "GET",
+					"url":          fmt.Sprintf("%s/healthz", baseURL),
+					"description":  "Liveness probe.",
+					"example_curl": fmt.Sprintf("curl -sS -H 'bypass-tunnel-reminder: 1' -H 'ngrok-skip-browser-warning: 1' '%s/healthz'", baseURL),
 				},
 			},
 			"grants": map[string]bool{
@@ -384,31 +419,31 @@ func startHTTPServer(cfg Config) {
 				{
 					"name":        "inspect_workspace",
 					"description": "List all non-hidden files in the workspace.",
-					"path":        "GET /inspect or POST /mcp (tools/call)",
+					"path":        fmt.Sprintf("GET %s/inspect or POST %s/mcp (tools/call)", baseURL, baseURL),
 					"parameters":  map[string]string{},
 				},
 				{
 					"name":        "read_file",
 					"description": "Read file contents and obtain SHA-256 CAS digest for verification.",
-					"path":        "GET /read/<path> or POST /mcp (tools/call)",
+					"path":        fmt.Sprintf("GET %s/read/<path> or POST %s/mcp (tools/call)", baseURL, baseURL),
 					"parameters":  map[string]string{"path": "Relative path to target file within workspace"},
 				},
 				{
 					"name":        "write_file",
 					"description": "Write or overwrite file under CAS precondition.",
-					"path":        "POST /mcp (tools/call)",
+					"path":        fmt.Sprintf("POST %s/mcp (tools/call)", baseURL),
 					"parameters":  map[string]string{"path": "Relative path", "content": "File content", "expected_sha256": "Previous SHA-256 or empty for new file"},
 				},
 				{
 					"name":        "edit_file",
 					"description": "Perform precise contiguous text replacement with CAS precondition.",
-					"path":        "POST /mcp (tools/call)",
+					"path":        fmt.Sprintf("POST %s/mcp (tools/call)", baseURL),
 					"parameters":  map[string]string{"path": "Relative path", "old_text": "Exact text to replace", "new_text": "Replacement text", "expected_sha256": "Current file SHA-256"},
 				},
 				{
 					"name":        "run_command",
 					"description": "Execute shell command on the host computer. 'rm' is strictly prohibited. POST only.",
-					"path":        "POST /run with {\"command\": \"...\"} or POST /mcp (tools/call)",
+					"path":        fmt.Sprintf("POST %s/run with {\"command\": \"...\"} or POST %s/mcp (tools/call)", baseURL, baseURL),
 					"parameters":  map[string]string{"command": "Shell command string in JSON body: {\"command\": \"...\"}"},
 				},
 			},
@@ -456,25 +491,29 @@ func startHTTPServer(cfg Config) {
 		json.NewEncoder(w).Encode(res)
 	}
 
-	http.HandleFunc("/run", runHandler)
-	http.HandleFunc("/exec", runHandler)
+	route := func(pattern string, handler http.HandlerFunc) {
+		http.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			fmt.Printf("[nano-airbridge] %s %s from %s (ua: %s)\n", r.Method, r.URL.Path, r.RemoteAddr, r.UserAgent())
+			handler(w, r)
+		})
+	}
 
-	http.HandleFunc("/help", helpHandler)
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	route("/run", runHandler)
+	route("/exec", runHandler)
+	route("/help", helpHandler)
+	route("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			helpHandler(w, r)
 			return
 		}
 		http.NotFound(w, r)
 	})
-
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	route("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "server": "nano-airbridge-go", "version": version})
 	})
-
-	http.HandleFunc("/inspect", func(w http.ResponseWriter, r *http.Request) {
+	route("/inspect", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		res, err := handleInspectWorkspace(cfg.Root)
@@ -484,8 +523,7 @@ func startHTTPServer(cfg Config) {
 		}
 		json.NewEncoder(w).Encode(res)
 	})
-
-	http.HandleFunc("/read/", func(w http.ResponseWriter, r *http.Request) {
+	route("/read/", func(w http.ResponseWriter, r *http.Request) {
 		relPath := strings.TrimPrefix(r.URL.Path, "/read/")
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -496,8 +534,7 @@ func startHTTPServer(cfg Config) {
 		}
 		json.NewEncoder(w).Encode(res)
 	})
-
-	http.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+	route("/mcp", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		if r.Method == "OPTIONS" {

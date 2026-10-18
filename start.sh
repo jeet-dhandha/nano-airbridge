@@ -306,6 +306,7 @@ echo "Connect to our local workspace bridge:"
 echo "${TUNNEL_URL:-${NGROK_URL:-http://localhost:${PORT}}}/help"
 echo ""
 echo "Task: <MENTION YOUR TASK HERE>"
+echo "(Note: To run commands on the local machine, use curl -sS -X POST with tunnel bypass headers as documented in /help)."
 echo "--------------------------------------------------------------------------------"
 echo ""
 
