@@ -196,9 +196,12 @@ Workflow:
 
 ---
 
-## Video Demo (ChatGPT Filtering Local Dataset)
+## Video Walkthrough (Authentic Live Local Access)
 
-See [`chatgpt_data_filter_demo.mp4`](chatgpt_data_filter_demo.mp4) for an end-to-end recorded walkthrough of ChatGPT using `nano-airbridge` to filter `customers_orders.csv` in a local workspace, computing category revenue metrics and generating a cryptographic execution receipt with zero UI leakage.
+![ChatGPT Local Data Filtering via nano-airbridge](chatgpt_data_filter_demo.gif)
+
+> **Zero UI Leakage & Real Live File Fetch**: The recording above captures the clean browser tab viewport in real time. ChatGPT is prompted with *only* the local bridge endpoint URL (zero embedded CSV data in the prompt). The local `nano-airbridge` daemon serves `customers_orders.csv` from disk, and ChatGPT independently verifies the SHA-256 CAS hash and aggregates the dataset. Full 2K recording available at [`chatgpt_data_filter_demo.mp4`](chatgpt_data_filter_demo.mp4).
+
 
 
 ---
