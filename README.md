@@ -174,30 +174,33 @@ ChatGPT Custom Connector ──HTTPS──> nano_relay.php (InfinityFree / cPane
 
 ---
 
-#### Option B: 100% Free Remote Cloud Relay (`nano_relay.php` on InfinityFree)
-*Best for: Zero ongoing cost, zero binaries, works behind strict corporate firewalls and NAT without port forwarding.*
+#### Option B: 100% Free Remote Cloud Relay (`nano_relay.php` / Python Cloud Relay)
+*Best for: Zero ongoing cost, zero tunnels/ngrok, works behind strict corporate firewalls and NAT without port forwarding.*
 
-1. **Deploy `relay/nano_relay.php`**:
-   Upload `relay/nano_relay.php` to the `/htdocs` folder of any free PHP hosting provider (e.g. [InfinityFree](https://infinityfree.com), AwardSpace, or your own shared cPanel).
-   * **Live Reference Deployment**: [`https://nano-airbridge.gt.tc/nano_relay.php`](https://nano-airbridge.gt.tc/nano_relay.php)
+1. **Deploy the relay server once** on your web host:
+   * **PHP Web Hosting** (cPanel, shared hosting, or free host): Upload `relay/nano_relay.php` to your `/public_html` or `/htdocs` folder.
+   * **Zero-Dep Python Hosting** (Render, Railway, Fly.io, VPS): Run `python3 relay/nano_relay_server.py --port 8080`.
+   * Live reference endpoint: `https://nano-airbridge.gt.tc/nano_relay.php`
 
-   > [!TIP]
-   > **Automate with AI Assistants (Antigravity, Copilot, OpenCode, freebuff)**:
-   > If you do not want to upload files manually via cPanel/FTP, you can ask any agentic coding assistant to automate it for you:
-   > *"Deploy `relay/nano_relay.php` into the `/htdocs` directory of my InfinityFree account using browser automation or FTP credentials."*
+2. **Start the local bridge passing your relay URL**:
+   Simply pass `--relay <URL>` in your startup command:
 
-2. **Start the outbound-only agent** on your local machine:
    ```bash
-   python3 relay/nano_agent.py \
-     --relay https://nano-airbridge.gt.tc/nano_relay.php \
-     --token YOUR_AGENT_TOKEN \
-     --command "python3 nano_airbridge.py --root /path/to/project --enable-writes --enable-execution"
-   ```
-   *No incoming ports are opened. The agent communicates strictly via outbound HTTPS long-polling.*
+   # macOS / Linux
+   ./start.sh /path/to/project --relay https://your-server.com/nano_relay.php
 
-3. **Connect ChatGPT Custom Connector**:
-   * In ChatGPT → **Settings → Connectors → Create custom connector**
-   * Endpoint URL: `https://nano-airbridge.gt.tc/nano_relay.php?op=mcp&s=YOUR_CLIENT_SECRET`
+   # Windows (cmd / PowerShell)
+   start.bat C:\path\to\project --relay https://your-server.com/nano_relay.php
+
+   # Standalone Native Binary (Zero Python, Zero PHP)
+   ./bin/nano-airbridge --root /path/to/project --relay https://your-server.com/nano_relay.php
+   ```
+
+   *No open ports, no ngrok tunnel, and no local PHP required. The local machine connects via outbound-only HTTPS polling.*
+
+3. **Connect ChatGPT / Claude as Custom MCP Connector**:
+   * In ChatGPT → **Settings → Connectors → Create custom connector** (or Claude MCP connector):
+   * Endpoint URL: `https://your-server.com/nano_relay.php?op=mcp&s=YOUR_CLIENT_SECRET`
 
 ---
 

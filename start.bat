@@ -18,14 +18,63 @@ if %errorlevel% neq 0 (
     )
 )
 
-set "ROOT_DIR=%~1"
+set "ROOT_DIR="
+set "RELAY_URL="
+set "AGENT_TOKEN=airbridge_agent_token_112233"
+set "PORT=8899"
+set "MODE="
+
+:parse_loop
+if "%~1"=="" goto end_parse
+if /i "%~1"=="--relay" (
+    set "RELAY_URL=%~2"
+    set "MODE=agent"
+    shift
+    shift
+    goto parse_loop
+)
+if /i "%~1"=="--token" (
+    set "AGENT_TOKEN=%~2"
+    shift
+    shift
+    goto parse_loop
+)
+if /i "%~1"=="--port" (
+    set "PORT=%~2"
+    shift
+    shift
+    goto parse_loop
+)
+if /i "%~1"=="gateway" (
+    set "MODE=gateway"
+    shift
+    goto parse_loop
+)
+if /i "%~1"=="agent" (
+    set "MODE=agent"
+    shift
+    goto parse_loop
+)
+if /i "%~1"=="local" (
+    set "MODE=local"
+    shift
+    goto parse_loop
+)
+if "%ROOT_DIR%"=="" (
+    set "ROOT_DIR=%~1"
+)
+shift
+goto parse_loop
+:end_parse
+
 if "%ROOT_DIR%"=="" set "ROOT_DIR=%SCRIPT_DIR%demo_workspace"
-
-set "PORT=%PORT%"
-if "%PORT%"=="" set "PORT=8899"
-
-set "MODE=%~2"
-if "%MODE%"=="" set "MODE=gateway"
+if "%MODE%"=="" (
+    if not "%RELAY_URL%"=="" (
+        set "MODE=agent"
+    ) else (
+        set "MODE=gateway"
+    )
+)
 
 echo ==================================================
 echo  nano-airbridge — Zero-Dependency MCP Runtime
@@ -33,6 +82,11 @@ echo ==================================================
 echo  Workspace: %ROOT_DIR%
 echo  Mode:      %MODE%
 echo  OS:        Windows
+if "%MODE%"=="agent" (
+echo  Relay URL: %RELAY_URL%
+) else (
+echo  HTTP Port: %PORT%
+)
 echo ==================================================
 
 if "%MODE%"=="gateway" (
@@ -42,10 +96,7 @@ if "%MODE%"=="gateway" (
 )
 
 if "%MODE%"=="agent" (
-    set "RELAY_URL=%RELAY_URL%"
     if "!RELAY_URL!"=="" set "RELAY_URL=https://nano-airbridge.gt.tc/nano_relay.php"
-    set "AGENT_TOKEN=%AGENT_TOKEN%"
-    if "!AGENT_TOKEN!"=="" set "AGENT_TOKEN=airbridge_agent_token_112233"
     echo Connecting to Cloud Relay via outbound long-poll:
     echo  Relay: !RELAY_URL!
     echo  No open ports or ngrok needed.
@@ -59,5 +110,5 @@ if "%MODE%"=="local" (
     goto :eof
 )
 
-echo Usage: start.bat [path_to_workspace] [gateway^|agent^|local]
+echo Usage: start.bat [path_to_workspace] [--relay <URL>]
 pause

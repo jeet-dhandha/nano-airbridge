@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const version = "0.1.0"
@@ -269,6 +271,137 @@ func startHTTPServer(cfg Config) {
 	}
 }
 
+func startRelayAgent(cfg Config) {
+	token := cfg.AgentToken
+	if token == "" {
+		token = os.Getenv("NANO_RELAY_AGENT_TOKEN")
+		if token == "" {
+			token = "airbridge_agent_token_112233"
+		}
+	}
+	relayBase := strings.TrimRight(strings.Split(cfg.RelayURL, "?")[0], "/")
+
+	fmt.Printf("[nano-airbridge] Native Standalone Binary v%s connecting to Cloud Relay\n", version)
+	fmt.Printf("[nano-airbridge] Relay: %s\n", relayBase)
+	fmt.Printf("[nano-airbridge] Workspace: %s (writes=%v, exec=%v)\n", cfg.Root, cfg.EnableWrites, cfg.EnableExecution)
+
+	// 1. Register tools
+	regPayload := map[string]interface{}{
+		"tools": []map[string]string{
+			{"name": "inspect_workspace", "description": "List directory contents or search text"},
+			{"name": "read_file", "description": "Read file with SHA-256 CAS verification"},
+			{"name": "run_command", "description": "Execute shell command inside root"},
+		},
+		"server": map[string]string{"name": "nano-airbridge-go", "version": version},
+	}
+	regBytes, _ := json.Marshal(regPayload)
+
+	regReq, _ := http.NewRequest("POST", fmt.Sprintf("%s?op=register&t=%s", relayBase, token), bytes.NewReader(regBytes))
+	regReq.Header.Set("Content-Type", "application/json")
+	regReq.Header.Set("X-Agent-Token", token)
+	client := &http.Client{Timeout: 35 * time.Second}
+	resp, err := client.Do(regReq)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[nano-airbridge] Registration warning: %v\n", err)
+	} else {
+		resp.Body.Close()
+		fmt.Printf("[nano-airbridge] Registered with cloud relay successfully.\n")
+	}
+
+	// 2. Outbound long-polling loop
+	for {
+		pollReq, _ := http.NewRequest("GET", fmt.Sprintf("%s?op=poll&wait=20&t=%s", relayBase, token), nil)
+		pollReq.Header.Set("X-Agent-Token", token)
+		pollResp, err := client.Do(pollReq)
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		var pollData struct {
+			Ok       bool                     `json:"ok"`
+			Requests []map[string]interface{} `json:"requests"`
+		}
+		json.NewDecoder(pollResp.Body).Decode(&pollData)
+		pollResp.Body.Close()
+
+		for _, req := range pollData.Requests {
+			internalID, _ := req["internal_id"].(string)
+			method, _ := req["method"].(string)
+			msgID := req["id"]
+
+			var reply map[string]interface{}
+			if method == "tools/call" {
+				params, _ := req["params"].(map[string]interface{})
+				toolName, _ := params["name"].(string)
+				args, _ := params["arguments"].(map[string]interface{})
+
+				var (
+					res interface{}
+					err error
+				)
+				switch toolName {
+				case "read_file":
+					p, _ := args["path"].(string)
+					res, err = handleReadFile(cfg.Root, p)
+				case "inspect_workspace":
+					res, err = handleInspectWorkspace(cfg.Root)
+				case "run_command":
+					var argv []string
+					if rawArgv, ok := args["argv"].([]interface{}); ok {
+						for _, a := range rawArgv {
+							if s, ok := a.(string); ok {
+								argv = append(argv, s)
+							}
+						}
+					}
+					res, err = handleRunCommand(cfg.Root, argv, cfg.EnableExecution)
+				default:
+					err = fmt.Errorf("unknown tool: %s", toolName)
+				}
+
+				if err != nil {
+					reply = map[string]interface{}{
+						"jsonrpc": "2.0",
+						"id":      msgID,
+						"result": map[string]interface{}{
+							"isError": true,
+							"content": []map[string]string{{"type": "text", "text": fmt.Sprintf("{\"error\":\"%s\"}", err.Error())}},
+						},
+					}
+				} else {
+					outBytes, _ := json.Marshal(res)
+					reply = map[string]interface{}{
+						"jsonrpc": "2.0",
+						"id":      msgID,
+						"result": map[string]interface{}{
+							"content": []map[string]string{{"type": "text", "text": string(outBytes)}},
+						},
+					}
+				}
+			} else {
+				reply = map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      msgID,
+					"error":   map[string]interface{}{"code": -32601, "message": "Method not found"},
+				}
+			}
+
+			postPayload := map[string]interface{}{
+				"internal_id": internalID,
+				"response":    reply,
+			}
+			postBytes, _ := json.Marshal(postPayload)
+			pReq, _ := http.NewRequest("POST", fmt.Sprintf("%s?op=response&t=%s", relayBase, token), bytes.NewReader(postBytes))
+			pReq.Header.Set("Content-Type", "application/json")
+			pReq.Header.Set("X-Agent-Token", token)
+			if pResp, pErr := client.Do(pReq); pErr == nil {
+				pResp.Body.Close()
+			}
+		}
+	}
+}
+
 func main() {
 	rootFlag := flag.String("root", ".", "Workspace root directory")
 	portFlag := flag.Int("port", 8899, "HTTP port (default 8899)")
@@ -293,5 +426,9 @@ func main() {
 		AgentToken:      *tokenFlag,
 	}
 
-	startHTTPServer(cfg)
+	if cfg.RelayURL != "" {
+		startRelayAgent(cfg)
+	} else {
+		startHTTPServer(cfg)
+	}
 }

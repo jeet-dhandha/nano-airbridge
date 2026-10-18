@@ -213,6 +213,24 @@ class RelayHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps(res).encode())
                 return
 
+            # If agent is not online, fail fast with structured content
+            if not self.state.is_agent_online():
+                res = {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {
+                        "isError": True,
+                        "content": [{"type": "text", "text": "{\"error\":{\"code\":\"agent_offline\",\"message\":\"The local agent is not connected.\"}}"}],
+                        "structuredContent": {"error": {"code": "agent_offline", "message": "The local agent is not connected to the relay."}, "effect": "known_no_effect"}
+                    }
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps(res).encode())
+                return
+
             # Forward tool calls to the long-polling local agent
             internal_id = secrets.token_hex(16)
             queued_msg = dict(body)
@@ -231,13 +249,19 @@ class RelayHandler(BaseHTTPRequestHandler):
                 reply = self.state.responses.pop(internal_id, None)
 
             if not got or reply is None:
-                self.send_response(504)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({
+                res = {
                     "jsonrpc": "2.0", "id": msg_id,
-                    "error": {"code": -32000, "message": "Agent timeout: local agent did not respond within 25 seconds"}
-                }).encode())
+                    "result": {
+                        "isError": True,
+                        "content": [{"type": "text", "text": "{\"error\":{\"code\":\"agent_timeout\",\"message\":\"The local agent did not respond within 25 seconds.\"}}"}],
+                        "structuredContent": {"error": {"code": "agent_timeout", "message": "The local agent did not respond in time."}, "effect": "effect_unknown"}
+                    }
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps(res).encode())
                 return
 
             reply["id"] = msg_id
