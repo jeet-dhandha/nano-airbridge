@@ -37,9 +37,11 @@ def log(message: str) -> None:
 
 
 def post_json(url: str, token: str, payload: dict, timeout: float = 30.0) -> dict | None:
+    sep = "&" if "?" in url else "?"
+    url_with_t = f"{url}{sep}t={token}" if token else url
     request = urllib.request.Request(
-        url, data=json.dumps(payload).encode(), method="POST",
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+        url_with_t, data=json.dumps(payload).encode(), method="POST",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}", "X-Agent-Token": token})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode() or "{}")
@@ -49,7 +51,11 @@ def post_json(url: str, token: str, payload: dict, timeout: float = 30.0) -> dic
 
 
 def get_json(url: str, token: str, timeout: float = 40.0) -> dict | None:
-    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    sep = "&" if "?" in url else "?"
+    url_with_t = f"{url}{sep}t={token}" if token else url
+    request = urllib.request.Request(
+        url_with_t,
+        headers={"Authorization": f"Bearer {token}", "X-Agent-Token": token})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode() or "{}")
