@@ -221,9 +221,43 @@ func handleEditFile(root, relPath, oldText, newText, expectedSHA256 string, enab
 	}, nil
 }
 
+func isCommandBlocked(cmdStr string, argv []string) error {
+	full := cmdStr
+	if len(argv) > 0 {
+		full = strings.Join(argv, " ")
+	}
+	clean := strings.ToLower(full)
+	// Check for any invocation of rm, rmdir, unlink
+	tokens := strings.Fields(clean)
+	for _, t := range tokens {
+		if t == "rm" || t == "rmdir" || t == "unlink" || strings.HasPrefix(t, "rm-") {
+			return fmt.Errorf("destructive command denied: '%s' is prohibited. Only write/execute commands are allowed.", t)
+		}
+	}
+	// Also check for sub-commands, pipes, redirects, or chained commands
+	for _, sep := range []string{";", "&&", "||", "|", "`", "$("} {
+		if strings.Contains(clean, sep) {
+			for _, chunk := range strings.Split(clean, sep) {
+				chunk = strings.TrimSpace(chunk)
+				fields := strings.Fields(chunk)
+				if len(fields) > 0 {
+					bin := filepath.Base(fields[0])
+					if bin == "rm" || bin == "rmdir" || bin == "unlink" {
+						return fmt.Errorf("destructive command denied: '%s' is prohibited. Only write/execute commands are allowed.", bin)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func handleRunCommand(root string, argv []string, cmdStr string, enableExec bool) (map[string]interface{}, error) {
 	if !enableExec {
 		return nil, fmt.Errorf("command execution disabled; start with --enable-execution")
+	}
+	if err := isCommandBlocked(cmdStr, argv); err != nil {
+		return nil, err
 	}
 	var cmd *exec.Cmd
 	if len(argv) > 0 {
@@ -332,6 +366,11 @@ func startHTTPServer(cfg Config) {
 					"description": "Read contents of any workspace file and retrieve whole-file SHA-256 CAS checksum.",
 					"example":     "/read/customers_orders.csv",
 				},
+				"/run": {
+					"method":      "POST",
+					"description": "Execute shell command directly on the host computer inside workspace root. Body: {\"command\": \"...\"}. Unlimited length via HTTP POST. Safety: 'rm' commands are strictly prohibited. Write and compute commands are permitted.",
+					"example":     "POST /run with JSON {\"command\": \"which python3 node bash go\"}",
+				},
 				"/mcp": {
 					"method":      "POST",
 					"description": "MCP JSON-RPC 2.0 gateway for tools/list, tools/call, and stateful operations.",
@@ -368,15 +407,57 @@ func startHTTPServer(cfg Config) {
 				},
 				{
 					"name":        "run_command",
-					"description": "Execute shell command inside workspace root directory.",
-					"path":        "POST /mcp (tools/call)",
-					"parameters":  map[string]string{"command": "Shell command string (e.g. 'npm test', 'go test ./...')"},
+					"description": "Execute shell command on the host computer. 'rm' is strictly prohibited. POST only.",
+					"path":        "POST /run with {\"command\": \"...\"} or POST /mcp (tools/call)",
+					"parameters":  map[string]string{"command": "Shell command string in JSON body: {\"command\": \"...\"}"},
 				},
 			},
 			"workspace_root": cfg.Root,
 		}
 		json.NewEncoder(w).Encode(helpDoc)
 	}
+
+	runHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if r.Method == "OPTIONS" {
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			return
+		}
+		if r.Method != "POST" {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "error",
+				"error":  "method not allowed: /run strictly requires HTTP POST with JSON body {\"command\": \"...\"}",
+			})
+			return
+		}
+		var body struct {
+			Command string `json:"command"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Command) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "error",
+				"error":  "invalid request: provide JSON body {\"command\": \"...\"}",
+			})
+			return
+		}
+		res, err := handleRunCommand(cfg.Root, nil, body.Command, cfg.EnableExecution)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "error",
+				"error":  err.Error(),
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(res)
+	}
+
+	http.HandleFunc("/run", runHandler)
+	http.HandleFunc("/exec", runHandler)
 
 	http.HandleFunc("/help", helpHandler)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
