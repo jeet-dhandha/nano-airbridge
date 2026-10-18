@@ -18,6 +18,8 @@ import subprocess
 import sys
 import threading
 
+import urllib.parse
+
 SERVER_PATH = Path(__file__).resolve().parent / "nano_airbridge.py"
 
 
@@ -36,13 +38,52 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/healthz"):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(b'{"status":"ok","server":"nano-airbridge-http"}\n')
             return
+
+        if self.path.startswith("/read/"):
+            subpath = urllib.parse.unquote(self.path[6:].split("?")[0])
+            rpc = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "read_file", "arguments": {"path": subpath}}
+            }
+            with self.lock:
+                self.proc.stdin.write(json.dumps(rpc) + "\n")
+                self.proc.stdin.flush()
+                reply_line = self.proc.stdout.readline()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(reply_line.encode("utf-8"))
+            return
+
+        if self.path.startswith("/inspect"):
+            rpc = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "inspect_workspace", "arguments": {"action": "list"}}
+            }
+            with self.lock:
+                self.proc.stdin.write(json.dumps(rpc) + "\n")
+                self.proc.stdin.flush()
+                reply_line = self.proc.stdout.readline()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(reply_line.encode("utf-8"))
+            return
+
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"nano-airbridge HTTP gateway is running. Send POST JSON-RPC to /mcp\n")
+        self.wfile.write(b"nano-airbridge HTTP gateway is running. Send POST JSON-RPC to /mcp, or GET /read/<path> /inspect\n")
 
     def do_POST(self):
         content_length = int(self.headers.get("Content-Length", 0))
