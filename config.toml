@@ -1,0 +1,16 @@
+# nano-airbridge configuration (optional — CLI flags work too).
+# CLI flags override these values. Grants are OFF by default, always explicit.
+
+# The single local project this server may touch. Required. Absolute path.
+root = "/absolute/path/to/your/project"
+
+# Private state: receipts, change records, leases. Optional (default ~/.nano-airbridge).
+# state_dir = "/home/user/.nano-airbridge"
+
+# Explicit grants — set true only what you want any connected chat to do.
+workspace_write_enabled = false
+execution_enabled = false
+
+# Bounds (optional; capped server-side).
+max_file_bytes = 2097152        # read/edit whole-file cap (bytes)
+command_timeout_seconds = 600   # default run_command timeout

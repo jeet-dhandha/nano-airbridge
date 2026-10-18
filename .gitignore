@@ -1,0 +1,12 @@
+# nano-airbridge — keep generated and secret files out of git
+__pycache__/
+*.py[cod]
+
+# relay runtime state and generated credentials (NEVER commit)
+relay/data/
+relay/nano_relay_config.php
+relay/relay_config.php
+
+# local state dirs if created in-tree
+.nano-airbridge/
+.om-local/
