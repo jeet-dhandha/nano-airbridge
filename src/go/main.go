@@ -305,6 +305,88 @@ var toolCatalog = []map[string]string{
 }
 
 func startHTTPServer(cfg Config) {
+	helpHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		helpDoc := map[string]interface{}{
+			"server": map[string]string{
+				"name":        "nano-airbridge",
+				"version":     version,
+				"description": "Model Context Protocol & HTTP REST Workspace Bridge for AI Agents",
+			},
+			"paths": map[string]map[string]string{
+				"/help": {
+					"method":      "GET",
+					"description": "API & Path discovery directory (this page). Lists all accessible paths and tools.",
+				},
+				"/healthz": {
+					"method":      "GET",
+					"description": "Liveness and health check endpoint.",
+				},
+				"/inspect": {
+					"method":      "GET",
+					"description": "Inspect workspace files, sizes, and relative paths.",
+				},
+				"/read/{path}": {
+					"method":      "GET",
+					"description": "Read contents of any workspace file and retrieve whole-file SHA-256 CAS checksum.",
+					"example":     "/read/customers_orders.csv",
+				},
+				"/mcp": {
+					"method":      "POST",
+					"description": "MCP JSON-RPC 2.0 gateway for tools/list, tools/call, and stateful operations.",
+				},
+			},
+			"grants": map[string]bool{
+				"writes":    cfg.EnableWrites,
+				"execution": cfg.EnableExecution,
+			},
+			"tools": []map[string]interface{}{
+				{
+					"name":        "inspect_workspace",
+					"description": "List all non-hidden files in the workspace.",
+					"path":        "GET /inspect or POST /mcp (tools/call)",
+					"parameters":  map[string]string{},
+				},
+				{
+					"name":        "read_file",
+					"description": "Read file contents and obtain SHA-256 CAS digest for verification.",
+					"path":        "GET /read/<path> or POST /mcp (tools/call)",
+					"parameters":  map[string]string{"path": "Relative path to target file within workspace"},
+				},
+				{
+					"name":        "write_file",
+					"description": "Write or overwrite file under CAS precondition.",
+					"path":        "POST /mcp (tools/call)",
+					"parameters":  map[string]string{"path": "Relative path", "content": "File content", "expected_sha256": "Previous SHA-256 or empty for new file"},
+				},
+				{
+					"name":        "edit_file",
+					"description": "Perform precise contiguous text replacement with CAS precondition.",
+					"path":        "POST /mcp (tools/call)",
+					"parameters":  map[string]string{"path": "Relative path", "old_text": "Exact text to replace", "new_text": "Replacement text", "expected_sha256": "Current file SHA-256"},
+				},
+				{
+					"name":        "run_command",
+					"description": "Execute shell command inside workspace root directory.",
+					"path":        "POST /mcp (tools/call)",
+					"parameters":  map[string]string{"command": "Shell command string (e.g. 'npm test', 'go test ./...')"},
+				},
+			},
+			"workspace_root": cfg.Root,
+		}
+		json.NewEncoder(w).Encode(helpDoc)
+	}
+
+	http.HandleFunc("/help", helpHandler)
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			helpHandler(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
