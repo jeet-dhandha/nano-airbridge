@@ -141,8 +141,8 @@ Add to `claude_desktop_config.json` (Settings → Developer → Edit Config):
 Remote web AI chats cannot execute commands on your local machine directly. `nano-airbridge` provides **two battle-tested pathways** to connect them:
 
 ```text
-[Option A: Instant Developer Gateway]
-ChatGPT / Kimi / Claude ──HTTPS──> ngrok ──HTTP:8899──> nano_http_server.py ──stdio──> nano_airbridge.py
+[Option A: Instant Developer Gateway (localtunnel / ngrok)]
+ChatGPT / Kimi / Claude ──HTTPS──> localtunnel / ngrok ──HTTP:8899──> nano_http_server.py ──stdio──> nano_airbridge.py
 
 [Option B: 100% Free Permanent Cloud Relay]
 ChatGPT Custom Connector ──HTTPS──> nano_relay.php (InfinityFree / cPanel)
@@ -154,21 +154,30 @@ ChatGPT Custom Connector ──HTTPS──> nano_relay.php (InfinityFree / cPane
 
 ---
 
-#### Option A: Instant Developer Gateway (ngrok + `nano_http_server.py`)
-*Best for: 30-second local testing, developers with an ngrok/Cloudflare account.*
+#### Option A: Instant Developer Gateway (localtunnel / ngrok + `nano_http_server.py`)
+*Best for: Zero-account public testing in under 30 seconds.*
 
-1. **Start the local HTTP JSON-RPC gateway** (zero external dependencies):
+1. **Start the local gateway** (automatically launches free localtunnel if `npx` is present):
    ```bash
-   python3 nano_http_server.py --root /path/to/project --port 8899 --enable-writes --enable-execution
+   # macOS / Linux
+   ./start.sh /path/to/project
+
+   # Windows
+   start.bat C:\path\to\project
    ```
-2. **Expose the port publicly**:
+   * **Zero accounts, zero signups**: Launches `localtunnel` automatically. Your terminal displays a ready-to-use public HTTPS endpoint: `https://<subdomain>.loca.lt/mcp`.
+   * **Smart OS Detection**: If Node.js/npx is not yet installed, `start.sh` detects your OS and prints the exact 1-line installation command:
+     - macOS: `brew install node`
+     - Ubuntu / Debian: `sudo apt update && sudo apt install -y nodejs npm`
+     - Fedora / RHEL: `sudo dnf install -y nodejs`
+     - Arch Linux: `sudo pacman -S nodejs npm`
+     - Windows: `winget install OpenJS.NodeJS`
+   * **Strictly Local Mode**: Pass `--no-tunnel` to keep the server confined to `http://localhost:8899/mcp`.
+   * **Existing ngrok**: If ngrok is already running locally on port 4040, `start.sh` automatically uses it.
+
+2. **Verify live endpoint**:
    ```bash
-   ngrok http 8899
-   ```
-3. **Your public MCP endpoint**: `https://<your-subdomain>.ngrok-free.dev/mcp`
-   Verify live health:
-   ```bash
-   curl -H "ngrok-skip-browser-warning: 1" https://<your-subdomain>.ngrok-free.dev/healthz
+   curl https://<your-subdomain>.loca.lt/healthz
    # => {"status":"ok","server":"nano-airbridge-http"}
    ```
 

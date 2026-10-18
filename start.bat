@@ -90,7 +90,31 @@ if "%MODE%"=="agent" (
     )
     set "MCP_ENDPOINT=!RELAY_URL!?op=mcp&s=!SESSION_KEY!"
 ) else if "%MODE%"=="gateway" (
-    set "MCP_ENDPOINT=http://localhost:%PORT%/mcp"
+    set "TUNNEL_URL="
+    where npx >nul 2>&1
+    if errorlevel 1 (
+        echo ================================================================================
+        echo  [!] Node.js & npx are not installed (needed to launch free localtunnel).
+        echo --------------------------------------------------------------------------------
+        echo  To enable free public tunneling for ChatGPT / Claude without any accounts:
+        echo    Windows (winget):   winget install OpenJS.NodeJS
+        echo    Official Download:  https://nodejs.org/
+        echo --------------------------------------------------------------------------------
+        echo  Continuing with local gateway on http://localhost:%PORT%/mcp
+        echo ================================================================================
+        echo.
+        set "MCP_ENDPOINT=http://localhost:%PORT%/mcp"
+    ) else (
+        echo ⚡ Launching free localtunnel (zero accounts, no sign-up)...
+        start /b "" cmd /c "npx -y localtunnel --port %PORT% > %TEMP%\airbridge_lt.log 2>&1"
+        timeout /t 3 /nobreak >nul
+        for /f "tokens=4" %%u in ('findstr "your url is:" %TEMP%\airbridge_lt.log 2^>nul') do set "TUNNEL_URL=%%u"
+        if not "!TUNNEL_URL!"=="" (
+            set "MCP_ENDPOINT=!TUNNEL_URL!/mcp"
+        ) else (
+            set "MCP_ENDPOINT=http://localhost:%PORT%/mcp"
+        )
+    )
 )
 
 echo ================================================================================
@@ -104,6 +128,7 @@ echo  Relay URL:    !RELAY_URL!
 echo  Session Key:  !SESSION_KEY!
 echo  MCP Endpoint: !MCP_ENDPOINT!
 ) else if "%MODE%"=="gateway" (
+if not "!TUNNEL_URL!"=="" echo  Public Tunnel: !TUNNEL_URL! (localtunnel)
 echo  MCP Endpoint: !MCP_ENDPOINT!
 echo  Local Port:   %PORT%
 )

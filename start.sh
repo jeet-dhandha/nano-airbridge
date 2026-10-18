@@ -19,11 +19,16 @@ RELAY_URL=""
 AGENT_TOKEN="${AGENT_TOKEN:-airbridge_agent_token_112233}"
 SESSION_KEY="${SESSION_KEY:-}"
 PORT="${PORT:-8899}"
+USE_TUNNEL="${USE_TUNNEL:-true}"
 MODE=""
 
 # Parse flags and arguments in any order
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --no-tunnel)
+            USE_TUNNEL="false"
+            shift
+            ;;
         --relay)
             RELAY_URL="${2:-}"
             MODE="agent"
@@ -88,7 +93,16 @@ fi
 
 # Detect or generate session key and public endpoint URL
 NGROK_URL=""
+TUNNEL_URL=""
+TUNNEL_PID=""
 MCP_ENDPOINT=""
+
+cleanup() {
+    if [[ -n "$TUNNEL_PID" ]]; then
+        kill "$TUNNEL_PID" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT INT TERM
 
 if [[ "$MODE" == "agent" ]]; then
     if [[ -z "$RELAY_URL" ]]; then
@@ -99,11 +113,59 @@ if [[ "$MODE" == "agent" ]]; then
     fi
     MCP_ENDPOINT="${RELAY_URL}?op=mcp&s=${SESSION_KEY}"
 elif [[ "$MODE" == "gateway" ]]; then
+    # 1. Check if ngrok is already running locally
     if command -v curl &>/dev/null; then
         NGROK_URL=$(curl -s --connect-timeout 0.5 http://127.0.0.1:4040/api/tunnels 2>/dev/null | $PYTHON_CMD -c 'import sys, json; data=json.load(sys.stdin); print(data["tunnels"][0]["public_url"])' 2>/dev/null || true)
     fi
+
+    # 2. If ngrok is running, use it
     if [[ -n "$NGROK_URL" ]]; then
         MCP_ENDPOINT="${NGROK_URL}/mcp"
+    elif [[ "$USE_TUNNEL" != "false" ]]; then
+        # 3. Check for npx to launch localtunnel
+        if ! command -v npx &>/dev/null; then
+            echo "================================================================================"
+            echo " ⚠️  Node.js & npx are not installed (needed to launch free localtunnel)."
+            echo "--------------------------------------------------------------------------------"
+            echo " To enable free public tunneling for ChatGPT / Claude without any accounts:"
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                echo "   macOS (Homebrew):   brew install node"
+            elif [[ -f /etc/debian_version ]]; then
+                echo "   Ubuntu / Debian:    sudo apt update && sudo apt install -y nodejs npm"
+            elif [[ -f /etc/fedora-release ]] || [[ -f /etc/redhat-release ]]; then
+                echo "   Fedora / RHEL:      sudo dnf install -y nodejs"
+            elif [[ -f /etc/arch-release ]]; then
+                echo "   Arch Linux:         sudo pacman -S nodejs npm"
+            else
+                echo "   Download Node.js:   https://nodejs.org/"
+            fi
+            echo "--------------------------------------------------------------------------------"
+            echo " Continuing with local gateway on http://localhost:${PORT}/mcp"
+            echo "================================================================================"
+            MCP_ENDPOINT="http://localhost:${PORT}/mcp"
+        else
+            echo "⚡ Launching free localtunnel (zero accounts, no sign-up)..."
+            TUNNEL_LOG="/tmp/airbridge_lt_${PORT}.log"
+            rm -f "$TUNNEL_LOG"
+            npx -y localtunnel --port "$PORT" > "$TUNNEL_LOG" 2>&1 &
+            TUNNEL_PID=$!
+            for i in {1..30}; do
+                if [[ -f "$TUNNEL_LOG" ]]; then
+                    TUNNEL_URL=$(grep -o 'https://[^ ]*loca\.lt' "$TUNNEL_LOG" 2>/dev/null | head -n 1 || true)
+                    if [[ -n "$TUNNEL_URL" ]]; then
+                        break
+                    fi
+                fi
+                sleep 0.3
+            done
+
+            if [[ -n "$TUNNEL_URL" ]]; then
+                MCP_ENDPOINT="${TUNNEL_URL}/mcp"
+            else
+                echo " [!] localtunnel timed out, falling back to local port."
+                MCP_ENDPOINT="http://localhost:${PORT}/mcp"
+            fi
+        fi
     else
         MCP_ENDPOINT="http://localhost:${PORT}/mcp"
     fi
@@ -122,8 +184,10 @@ echo " Session Key:  $SESSION_KEY"
 echo " MCP Endpoint: $MCP_ENDPOINT"
 echo " Token:        ${AGENT_TOKEN:0:8}..."
 elif [[ "$MODE" == "gateway" ]]; then
-if [[ -n "$NGROK_URL" ]]; then
-echo " ngrok Tunnel: $NGROK_URL"
+if [[ -n "$TUNNEL_URL" ]]; then
+echo " Public Tunnel: $TUNNEL_URL (localtunnel)"
+elif [[ -n "$NGROK_URL" ]]; then
+echo " Public Tunnel: $NGROK_URL (ngrok)"
 fi
 echo " MCP Endpoint: $MCP_ENDPOINT"
 echo " Local Port:   $PORT"
@@ -164,7 +228,7 @@ fi
 case "$MODE" in
     gateway)
         echo "Starting HTTP/MCP Gateway on port $PORT..."
-        exec "$PYTHON_CMD" "$SCRIPT_DIR/nano_http_server.py" \
+        "$PYTHON_CMD" "$SCRIPT_DIR/nano_http_server.py" \
             --root "$ROOT_DIR" \
             --port "$PORT" \
             --enable-writes \

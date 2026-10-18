@@ -224,7 +224,8 @@ def main():
     parser.add_argument("--enable-execution", action="store_true", help="Grant command execution")
     args = parser.parse_args()
 
-    sub_args = [sys.executable, str(SERVER_PATH), "--root", args.root]
+    resolved_root = str(Path(args.root).resolve())
+    sub_args = [sys.executable, str(SERVER_PATH), "--root", resolved_root]
     if args.enable_writes:
         sub_args.append("--enable-writes")
     if args.enable_execution:
